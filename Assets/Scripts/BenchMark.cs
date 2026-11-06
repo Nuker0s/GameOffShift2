@@ -87,17 +87,20 @@ public class BenchMark : MonoBehaviour
                     type = PhysicsBody.BodyType.Dynamic,
                     position = worldPos,
                     rotation = PhysicsRotate.down,
+                    
                 }
             );
             Debug.Log($"Body {i} valid: {body.isValid} pos: {worldPos}");
             PhysicsShapeDefinition shapeDef = new PhysicsShapeDefinition
-            {
-                surfaceMaterial = new PhysicsShape.SurfaceMaterial
                 {
-                    friction = 0.5f,
-                    customColor = Color.red,
-                }
-            };
+                    triggerEvents = true,
+
+                    surfaceMaterial = new PhysicsShape.SurfaceMaterial
+                    {
+                        friction = 0.5f,
+                        customColor = Color.red,
+                    }
+                };
             PhysicsShape createdShape = body.CreateShape(
                 new CircleGeometry { center = Vector2.zero, radius = 0.18f },
                 shapeDef
