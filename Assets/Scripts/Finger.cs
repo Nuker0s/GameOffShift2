@@ -60,7 +60,7 @@ public class Finger : MonoBehaviour
         Vector3 mousePos = Camera.main.ScreenToWorldPoint( Mouse.current.position.ReadValue());
         Vector2 worldPos = (Vector2)mousePos;
         PhysicsBody body = sphere.body;
-        body.linearVelocity = (worldPos - sphere.body.position);
+        body.position = worldPos;
         //sphere.body.ApplyForce((worldPos-sphere.body.position).normalized * fingerMoveMultiplier,sphere.body.position);
         if(Mouse.current.leftButton.isPressed)
         {
@@ -69,7 +69,6 @@ public class Finger : MonoBehaviour
             {
                 item.body.ApplyForce((sphere.body.position - item.body.position).normalized * Vector2.Distance(sphere.body.position, item.body.position) * forceMultiplier, item.body.position);
             }
-            
         }
     }
     
