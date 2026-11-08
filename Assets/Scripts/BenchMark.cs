@@ -129,16 +129,20 @@ public class BenchMark : MonoBehaviour
                     position = worldPos,
                     rotation = PhysicsRotate.down,
                     linearDamping = 0.2f,
+                    gravityScale = 1f,
                     
                 }
             );
             PhysicsShapeDefinition shapeDef = new PhysicsShapeDefinition
                 {
                     triggerEvents = true,
+                    density = 1f, //weight
 
                     surfaceMaterial = new PhysicsShape.SurfaceMaterial
                     {
                         customColor = Color.red,
+                        friction = 0.2f,
+                        bounciness = 0.2f,
                     }
                 };
             PhysicsShape createdShape = body.CreateShape(
