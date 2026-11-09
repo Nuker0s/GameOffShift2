@@ -1032,7 +1032,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidLite
   gridOrigin: {x: -12.3, y: -30.77}
   gridSize: {x: 22.8, y: 44.3}
-  cellSize: 0.5
+  cellSize: 0.37
   smoothingRadius: 0.5
   iterations: 3
   enablePBF: 1
@@ -1041,12 +1041,12 @@ MonoBehaviour:
   maxCorrection: 0.3
   types:
   - name: Water
-    restDensity: 40
+    restDensity: 15
     stiffness: 0.5
     viscosity: 0.2
     gravityMultiplier: 1
   - name: Oil
-    restDensity: 30
+    restDensity: 12
     stiffness: 0.3
     viscosity: 0.6
     gravityMultiplier: 1
@@ -1089,7 +1089,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidSpawner
   sim: {fileID: 0}
   particleRadius: 0.12
-  particleMass: 1
+  particleMass: 0.001
   particleDensity: 1
   particleFriction: 0.1
   particleBounciness: 0
