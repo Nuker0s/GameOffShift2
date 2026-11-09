@@ -370,13 +370,14 @@ MonoBehaviour:
   spawnPerFrame: 10
   spacing: 0.3
   batchDelay: 0
-  particleRadius: 0.1
+  particleRadius: 0.13
+  particleMass: 0.01
   particleDensity: 0.2
+  particleMassOverrideAtSpawn: 1
   particleFriction: 0
   particleBounciness: 0
   particleColor: {r: 1, g: 0, b: 0, a: 1}
-  particleMass: 0.1
-  particleLinearDamping: 0
+  particleLinearDamping: 0.1
   particleGravityScale: 1
   particleTriggerEvents: 1
   particleFreezeRotation: 1
@@ -475,6 +476,7 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
+  mirrorCurveX: 1
   kernelLutSize: 64
   autoRebakeKernel: 1
   smoothingRadius: 1
@@ -482,19 +484,24 @@ MonoBehaviour:
   restDensity: 2
   gasConstant: 20
   viscosity: 1.5
+  maxNeighboursPerParticle: 32
+  normalizeKernel: 1
   maxForce: 1
   enablePressure: 1
   enableViscosity: 1
+  allowNegativePressure: 0
+  enableCoreRepulsion: 1
+  coreRadiusFraction: 0.35
+  coreStiffness: 60
+  minCentralGradient: 0.5
+  minCentralRange: 0.45
   enableSPH: 1
   runInFixedUpdate: 1
   useBodyMass: 1
-  useBodyVelocity: 1
-  particleTypeSource: 3
+  particleTypeSource: 1
   typeQuantize: 0.05
-  compensateLinearDamping: 1
-  fallbackDamping: 0.2
   useBurstJobs: 1
-  jobBatchSize: 64
+  jobBatchSize: 256
   autoSyncSource: {fileID: 519420033}
   autoSyncRemoveMissing: 0
 --- !u!1 &553368668

@@ -32,9 +32,16 @@ using Unity.Mathematics;
 ///   from the baked LUT so the sign stays correct either way.
 /// CLUSTERING NOTES:
 ///   Negative pressure (rho &lt; rest) used to flip the pressure term into attraction and
-///   freeze clumps. Now clamped to >= 0 unless allowNegativePressure is set, the pressure
-///   force uses the symmetric mj*(pA/rhoA^2 + pB/rhoB^2) form, and an explicit short-range
-///   core repulsion keeps overlapped particles apart where the smooth kernel gradient -> 0.
+///   freeze clumps. Now clamped to >= 0 unless allowNegativePressure is set, and the
+///   pressure force uses the symmetric mj*(pA/rhoA^2 + pB/rhoB^2) form.
+///   A weak mass-scaled core nudge handles exact overlaps where the smooth gradient -> 0;
+///   it is deliberately weaker than SPH pressure. If the sim is driven by the core term,
+///   restDensity/gasConstant are mistuned — run Calibrate Rest Density From Curve.
+/// FORCE BALANCE (why the curve matters now):
+///   With normalizeKernel, W(0)=1 so density ~= mass-weighted neighbour count and the
+///   curve SHAPE (not its absolute scale) sets pressure via gradient steepness.
+///   Pressure only exists where rho > restDensity, so keep rest near the calibrated hex
+///   packing value; far above it mutes everything, far below it makes everything explode.
 /// </summary>
 [DefaultExecutionOrder(PhysicsExecutionOrder.First)]
 public class FluidSim : MonoBehaviour
@@ -58,11 +65,11 @@ public class FluidSim : MonoBehaviour
     [Header("Smoothing Kernel (AnimationCurve -> LUT)")]
     [Tooltip("Physics q = r/h (0 = centre contact, 1 = edge of support). With mirrorCurveX ON, inspector X is reversed: left = edge, right = centre (matches curve presets).")]
     public AnimationCurve smoothingCurve = new AnimationCurve(
-        new Keyframe(1f, 0f, -0.8f, -0.8f),
-        new Keyframe(0.7f, 0.28f, -1.4f, -1.4f),
-        new Keyframe(0.35f, 0.72f, -1.2f, -1.2f),
-        new Keyframe(0f, 1f, 0f, 0f));
-    [Tooltip("Reverse inspector X so presets read left=edge, right=centre. Physics sampling still uses q=r/h internally.")]
+        new Keyframe(0f, 0f, -0.8f, -0.8f),
+        new Keyframe(0.3f, 0.28f, -1.4f, -1.4f),
+        new Keyframe(0.65f, 0.72f, -1.2f, -1.2f),
+        new Keyframe(1f, 1f, 0f, 0f));
+    [Tooltip("Reverse inspector X so presets read left=edge, right=centre. Physics sampling still uses q=r/h internally. NOTE: author the curve in INSPECTOR orientation (left=edge/low, right=centre/high); baking mirrors it to physics q.")]
     public bool mirrorCurveX = true;
     [Tooltip("LUT entries baked from the curve. Higher = smoother gradients, slightly slower bake.")]
     [Range(16, 256)] public int kernelLutSize = 64;
@@ -73,25 +80,33 @@ public class FluidSim : MonoBehaviour
     [Min(0.05f)] public float smoothingRadius = 0.4f;
     [Tooltip("SPH particle mass used ONLY when useBodyMass is OFF. When ON, body.mass (PhysicsCore) is authoritative.")]
     [Min(0.001f)] public float particleMass = 1f;
-    [Tooltip("SPH rest density in (bodyMass * kernelWeight) units. NOT a PhysicsCore shape density. Pressure = stiffness * max(0, density - restDensity) unless negative pressure allowed.")]
-    [Min(0.01f)] public float restDensity = 4f;
-    [Tooltip("Pressure stiffness k.")]
-    public float gasConstant = 20f;
-    [Tooltip("Viscosity coefficient mu. PhysicsCore linearDamping still applies on top of this in the engine.")]
-    public float viscosity = 1.5f;
+    [Tooltip("SPH rest density in (bodyMass * kernelWeight) units. NOT a PhysicsCore shape density. Pressure engages only above this value, so keep it near the calibrated hex-packing value (default matches mass=1, spacing=0.3, h=0.4). Recalibrate via context menu after curve/h changes.")]
+    [Min(0.01f)] public float restDensity = 1.3f;
+    [Tooltip("Pressure stiffness k. Pressure force also scales with kernel gradient, so steeper curve = stronger response at same k.")]
+    public float gasConstant = 60f;
+    [Tooltip("Viscosity coefficient mu, scaled by neighbour count (XSPH-style): effective damping per step ~ viscosity * neighbours / rho. Start 0.5-2. PhysicsCore linearDamping still applies on top in the engine.")]
+    public float viscosity = 1f;
+    [Tooltip("Maximum neighbours sampled per particle per step (0 = unlimited). Caps cost in dense piles; excess neighbours are skipped beyond this count.")]
+    [Min(0)] public int maxNeighboursPerParticle = 32;
+    [Tooltip("Normalize baked kernel so self-weight W(0) = 1. Density then reads as (mass-weighted effective neighbour count), making restDensity intuitive and curve-shape changes meaningful instead of rescaling everything.")]
+    public bool normalizeKernel = true;
     [Tooltip("Clamp per-particle SPH force magnitude.")]
     [Min(0f)] public float maxForce = 200f;
     public bool enablePressure = true;
     public bool enableViscosity = true;
     [Tooltip("Allow p<0 when rho<rest (cohesive/tensile). OFF clamps p>=0 which strongly reduces permanent clumps.")]
     public bool allowNegativePressure = false;
-    [Header("Anti-Clump (short-range core repulsion)")]
-    [Tooltip("Push overlapped pairs apart where the smooth kernel gradient -> 0. This is what breaks up stuck clusters.")]
-    public bool enableCoreRepulsion = true;
-    [Tooltip("Core radius as fraction of h. Pairs closer than this get pushed apart.")]
-    [Range(0.05f, 1f)] public float coreRadiusFraction = 0.35f;
-    [Tooltip("Core stiffness (force = stiffness * (1 - r/coreRadius) * dir). Scales with pair mass implicitly via SPH mass factor.")]
-    public float coreStiffness = 60f;
+    [Header("Anti-Clump (short-range overlap safety net — OFF by default)")]
+    [Tooltip("Last-resort push for near-exact overlaps where the smooth kernel gradient -> 0. OFF by default: SPH pressure should do the work. Enable only if exact overlaps tunnel through pressure. If the sim is driven by this, restDensity/gasConstant are mistuned.")]
+    public bool enableCoreRepulsion = false;
+    [Tooltip("Core radius as fraction of h. Only pairs closer than this get the safety push.")]
+    [Range(0.05f, 1f)] public float coreRadiusFraction = 0.2f;
+    [Tooltip("Core stiffness scale. Actual push = stiffness * massPair * (1 - r/coreR), deliberately weaker than SPH pressure at normal densities.")]
+    public float coreStiffness = 8f;
+    [Tooltip("Guarantee a minimum repulsion slope for close pairs: effective |gradW| is at least minGradientFrac * (W0/h) for r < minGradientRange*h. Fixes the flat-centre problem where smooth-curve gradients -> 0 near contact and pressure goes mute. 0 = pure curve gradient.")]
+    [Range(0f, 2f)] public float minCentralGradient = 0.5f;
+    [Tooltip("Range (fraction of h) over which the minimum central gradient applies.")]
+    [Range(0.05f, 1f)] public float minCentralRange = 0.45f;
     public bool enableSPH = true;
     [Tooltip("Apply SPH in FixedUpdate (runs BEFORE PhysicsCore simulation step thanks to execution order).")]
     public bool runInFixedUpdate = true;
@@ -138,6 +153,7 @@ public class FluidSim : MonoBehaviour
     NativeArray<int> _cellEndNative;
     NativeArray<int> _entriesNative;
     int _nativeCapP = -1, _nativeCapC = -1;
+    int _curveHash = 0;
     public int CellsX => _cellsX;
     public int CellsY => _cellsY;
     public int ParticleCount => _particles.Count;
@@ -157,13 +173,41 @@ public class FluidSim : MonoBehaviour
         coreRadiusFraction = Mathf.Clamp(coreRadiusFraction, 0.05f, 1f);
         kernelLutSize = Mathf.Clamp(kernelLutSize, 16, 256);
         jobBatchSize = Mathf.Max(1, jobBatchSize);
+        maxNeighboursPerParticle = Mathf.Max(0, maxNeighboursPerParticle);
         _cellsX = Mathf.Max(1, Mathf.CeilToInt(gridSize.x / cellSize));
         _cellsY = Mathf.Max(1, Mathf.CeilToInt(gridSize.y / cellSize));
-        if (autoRebakeKernel) _kernelDirty = true;
+        // AnimationCurve inspector edits don't always trip autoRebake by themselves,
+        // so hash the curve state and force a rebake when it changes.
+        int h = CurveHash();
+        if (h != _curveHash) { _curveHash = h; _kernelDirty = true; }
+        else if (autoRebakeKernel) _kernelDirty = true;
         if (Application.isPlaying)
         {
             if (_kernelDirty) BakeKernel();
             BuildGrid();
+        }
+    }
+    int CurveHash()
+    {
+        unchecked
+        {
+            int h = 17;
+            h = h * 31 + kernelLutSize;
+            h = h * 31 + (mirrorCurveX ? 1 : 0);
+            h = h * 31 + (normalizeKernel ? 1 : 0);
+            if (smoothingCurve != null)
+            {
+                var keys = smoothingCurve.keys;
+                h = h * 31 + smoothingCurve.length;
+                for (int i = 0; i < keys.Length; i++)
+                {
+                    h = h * 31 + keys[i].time.GetHashCode();
+                    h = h * 31 + keys[i].value.GetHashCode();
+                    h = h * 31 + keys[i].inTangent.GetHashCode();
+                    h = h * 31 + keys[i].outTangent.GetHashCode();
+                }
+            }
+            return h;
         }
     }
 
@@ -192,15 +236,28 @@ public class FluidSim : MonoBehaviour
         int n = Mathf.Clamp(kernelLutSize, 16, 256);
         if (_kernelLut == null || _kernelLut.Length != n) _kernelLut = new float[n];
         if (smoothingCurve == null || smoothingCurve.length == 0)
-            smoothingCurve = AnimationCurve.EaseInOut(0f, 1f, 1f, 0f);
+            // Fallback in INSPECTOR orientation (left=edge/low, right=centre/high);
+            // the mirror in the bake loop converts to physics q.
+            smoothingCurve = new AnimationCurve(
+                new Keyframe(0f, 0f, 0f, 2f),
+                new Keyframe(1f, 1f, 2f, 0f));
+        float peak = 0f;
         for (int i = 0; i < n; i++)
         {
             float q = (float)i / (n - 1);
             // Inspector X is mirrored when mirrorCurveX: inspector 0 = edge (q=1),
-            // inspector 1 = centre (q=0). Physics sampling always uses q = r/h.
+            // inspector 1 = centre (q=0). Physics sampling always uses q = r/h,
+            // where LUT[0] = centre (W max) and LUT[n-1] = edge (W = 0).
             float sampleX = mirrorCurveX ? 1f - q : q;
-            _kernelLut[i] = Mathf.Max(0f, smoothingCurve.Evaluate(sampleX));
+            float w = Mathf.Max(0f, smoothingCurve.Evaluate(sampleX));
+            _kernelLut[i] = w;
+            if (w > peak) peak = w;
         }
+        // Normalize so self-weight W(0) = 1: density then reads as mass-weighted
+        // effective neighbour count, and reshaping the curve changes the *profile*
+        // instead of silently rescaling all densities/pressures.
+        if (normalizeKernel && peak > 1e-6f)
+            for (int i = 0; i < n; i++) _kernelLut[i] /= peak;
         _kernelLut[n - 1] = 0f;
         _kernelGradLut = new float[n];
         for (int i = 0; i < n; i++)
@@ -487,7 +544,8 @@ public class FluidSim : MonoBehaviour
         public int cellsX, cellsY, span, lutN;
         public float2 origin, cellSz;
         public float h, h2, visc, maxF, coreR, coreK;
-        public int doP, doV, doCore;
+        public float minGrad, minGradRange, w0;
+        public int doP, doV, doCore, maxNeigh;
         public NativeArray<float2> force;
         public void Execute(int i)
         {
@@ -506,18 +564,23 @@ public class FluidSim : MonoBehaviour
                     {
                         int nx = cx + ox; if (nx < 0 || nx >= cellsX) continue;
                         int c = ny * cellsX + nx;
+                        int countedN = 0;
                         for (int e = cellStart[c]; e < cellEnd[c]; e++)
                         {
                             int j = entries[e]; if (j == i) continue;
+                            if (maxNeigh > 0 && countedN >= maxNeigh) break;
                             float2 delta = p - pos[j];
                             float r2 = delta.x * delta.x + delta.y * delta.y;
                             if (r2 >= h2) continue;
+                            countedN++;
                             float mj = mass[j];
+                            float mi = mass[i];
                             if (r2 < 1e-12f)
                             {
-                                // Exactly overlapped: push apart along an arbitrary axis.
+                                // Exactly overlapped: weak deterministic nudge along +X,
+                                // mass-scaled like everything else. Safety net only.
                                 if (doCore == 1 && coreK > 0f && coreR > 1e-6f)
-                                    f += new float2(coreK, 0f);
+                                    f += new float2(coreK * (mi + mj) * 0.5f, 0f);
                                 continue;
                             }
                             float r = math.sqrt(r2);
@@ -529,12 +592,20 @@ public class FluidSim : MonoBehaviour
                             if (k < 0) k = 0; if (k >= lutN - 1) k = lutN - 2;
                             float tt = ff - k;
                             float gw = (kernelGrad[k] * (1f - tt) + kernelGrad[k + 1] * tt) / h;
+                            // The smooth curve's gradient -> 0 near contact, muting pressure
+                            // for close pairs. Enforce a minimum slope there so the curve
+                            // SHAPE stays in charge: steepen the curve = stronger push.
+                            if (minGrad > 0f && minGradRange > 1e-6f && r < minGradRange)
+                            {
+                                float need = -minGrad * (w0 / math.max(h, 1e-6f));
+                                if (gw > need) gw = need;
+                            }
                             // Symmetric SPH pressure: mass-weighted, stable under varied masses.
                             if (doP == 1) f -= mj * (pA / (rhoA * rhoA) + pressure[j] / (rhoB * rhoB)) * gw * dir;
                             if (doV == 1) f += mj * visc * (vel[j] - vel[i]) / rhoB * math.abs(gw);
-                            // Short-range core repulsion: finite push where smooth grad -> 0.
+                            // Safety net: weak mass-scaled push only deep inside coreR.
                             if (doCore == 1 && coreK > 0f && coreR > 1e-6f && r < coreR)
-                                f += dir * (coreK * (1f - r / coreR));
+                                f += dir * (coreK * (mi + mj) * 0.5f * (1f - r / coreR));
                         }
                     }
                 }
@@ -585,8 +656,11 @@ public class FluidSim : MonoBehaviour
             cellSz = new float2(cellSize, cellSize),
             h = h, h2 = h * h, visc = viscosity, maxF = maxForce,
             coreR = coreR, coreK = coreStiffness,
+            minGrad = minCentralGradient, minGradRange = minCentralRange * h,
+            w0 = selfW,
             doP = enablePressure ? 1 : 0, doV = enableViscosity ? 1 : 0,
-            doCore = enableCoreRepulsion ? 1 : 0, force = _forceNative
+            doCore = enableCoreRepulsion ? 1 : 0, maxNeigh = maxNeighboursPerParticle,
+            force = _forceNative
         };
         fj.Schedule(n, Mathf.Max(1, jobBatchSize)).Complete();
         for (int i = 0; i < n; i++)
@@ -666,10 +740,14 @@ public class FluidSim : MonoBehaviour
             int cx, cy;
             if (!WorldToCell(pa, out cx, out cy)) { _sphForce[i] = f; continue; }
             int span = NeighbourCellSpan();
-            for (int oy = -span; oy <= span; oy++)
+            int countedN = 0;
+            bool capHit = false;
+            float w0m = (_kernelLut != null && _kernelLut.Length > 0) ? _kernelLut[0] : 1f;
+            float minR = minCentralRange * h;
+            for (int oy = -span; oy <= span && !capHit; oy++)
             {
                 int ny = cy + oy; if (ny < 0 || ny >= _cellsY) continue;
-                for (int ox = -span; ox <= span; ox++)
+                for (int ox = -span; ox <= span && !capHit; ox++)
                 {
                     int nx = cx + ox; if (nx < 0 || nx >= _cellsX) continue;
                     var cell = _cells[ny * _cellsX + nx];
@@ -677,14 +755,17 @@ public class FluidSim : MonoBehaviour
                     {
                         PhysicsBody b = cell[k];
                         if (!IsValidBody(b) || b.Equals(a)) continue;
+                        if (maxNeighboursPerParticle > 0 && countedN >= maxNeighboursPerParticle) { capHit = true; break; }
                         Vector2 delta = pa - b.position;
                         float r = delta.magnitude;
                         if (r >= h) continue;
+                        countedN++;
                         float mj = GetBodyMass(b);
+                        float mi = GetBodyMass(a);
                         if (r < 1e-6f)
                         {
-                            // Exactly overlapped: push apart along +X.
-                            if (enableCoreRepulsion) f.x += coreStiffness;
+                            // Exactly overlapped: weak mass-scaled nudge along +X. Safety net only.
+                            if (enableCoreRepulsion) f.x += coreStiffness * (mi + mj) * 0.5f;
                             continue;
                         }
                         Vector2 dir = delta / r;
@@ -692,12 +773,20 @@ public class FluidSim : MonoBehaviour
                         float rhoB = (j >= 0 && j < _density.Count) ? Mathf.Max(_density[j], 1e-5f) : rhoA;
                         float pB = (j >= 0 && j < _pressure.Count) ? _pressure[j] : pA;
                         float gw = SampleKernelGradient(r / h) / h;
+                        // Minimum central slope: keeps pressure alive for close pairs
+                        // where the smooth curve flattens, so curve steepness stays in charge.
+                        if (minCentralGradient > 0f && minR > 1e-6f && r < minR && r > 1e-6f)
+                        {
+                            float need = -minCentralGradient * (w0m / Mathf.Max(h, 1e-6f));
+                            if (gw > need) gw = need;
+                        }
                         // Symmetric form: mj * (pA/rhoA^2 + pB/rhoB^2), mass-aware.
                         if (enablePressure) f -= mj * (pA / (rhoA * rhoA) + pB / (rhoB * rhoB)) * gw * dir;
                         // No manual damping compensation: PhysicsCore owns linearDamping.
                         if (enableViscosity) f += mj * viscosity * (GetBodyVelocity(b) - va) / rhoB * Mathf.Abs(gw);
+                        // Safety net only: weak mass-scaled push deep inside coreR.
                         if (enableCoreRepulsion && coreR > 1e-6f && r < coreR)
-                            f += dir * (coreStiffness * (1f - r / coreR));
+                            f += dir * (coreStiffness * (mi + mj) * 0.5f * (1f - r / coreR));
                     }
                 }
             }
@@ -768,6 +857,32 @@ public class FluidSim : MonoBehaviour
         return true;
     }
     public void UpdateAllParticleCells() { PruneNulls(); EnsureSphCapacity(); RebuildGridFull(); }
+    /// <summary>
+    /// Estimate rest density for a hexagonal packing at targetSpacing using the CURRENT
+    /// baked kernel, then assign it. Run once after editing smoothingCurve/smoothingRadius:
+    /// right-click the component header > Calibrate Rest Density From Curve.
+    /// With a normalized kernel, density ~= sum of neighbour weights, so this samples
+    /// the 6 ring neighbours at targetSpacing plus self-weight.
+    /// </summary>
+    [ContextMenu("Calibrate Rest Density From Curve")]
+    public void CalibrateRestDensity()
+    {
+        if (_kernelDirty) BakeKernel();
+        float m = particleMass;
+        if (useBodyMass && _particles.Count > 0) m = GetBodyMass(_particles[0]);
+        m = Mathf.Max(m, 1e-6f);
+        // Fall back to spawn spacing if we can read it.
+        float spacing = smoothingRadius * 0.75f;
+        if (autoSyncSource != null) spacing = Mathf.Max(0.01f, autoSyncSource.spacing);
+        float q = Mathf.Clamp01(spacing / Mathf.Max(0.05f, smoothingRadius));
+        // 6 hex neighbours at spacing + self.
+        float calibrated = m * (SampleKernel(0f) + 6f * SampleKernel(q));
+        restDensity = Mathf.Max(0.01f, calibrated * 0.9f);
+        Debug.Log($"[FluidSim] Calibrated restDensity={restDensity:F3} (mass={m:F3}, spacing={spacing:F3}, q={q:F3}, W0={SampleKernel(0f):F3}, Wq={SampleKernel(q):F3}). Pressure now engages above this density.");
+#if UNITY_EDITOR
+        UnityEditor.EditorUtility.SetDirty(this);
+#endif
+    }
     public void GetNeighbours(PhysicsBody body, List<PhysicsBody> outN, float radius)
     {
         outN.Clear();
