@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEngine;
 using Unity.U2D.Physics;
 using Unity.Burst;
@@ -10,38 +9,34 @@ using Unity.Mathematics;
 /// <summary>
 /// FluidSim - Burst + Jobs SPH over a uniform grid, PhysicsCore2D-driven particles.
 ///
-/// GRID DECISION (you asked which is optimal):
-///   We REBUILD the grid every step (full rebuild), particles do NOT maintain
-///   their own cells incrementally. Reason: incremental List.Remove/Add per move
-///   is O(occupants) + GC churn + branchy, and cannot be Bursted. A full rebuild
-///   is O(N + cells) counting-sort, cache friendly, alloc-free after warmup, and
-///   feeds Burst jobs directly (cellStart/cellEnd + sorted entries). This file
-///   keeps UpdateParticleCell() only for external queries; the hot path always
-///   calls RebuildGridFull().
-/// BENCHMARK AUDIT (Benchmark.cs properties vs simulation):
-///   - linearDamping=0.2  -> extra velocity damping on top of SPH viscosity.
-///     Visually thicker fluid. OK, or set 0 and let viscosity do it. See
-///     compensateLinearDamping toggle.
-///   - gravityScale=1      -> fine, SPH forces add on top of gravity.
-///   - density=1 (shape)   -> sets rigidbody mass. If useBodyMass=true we read
-///     it as particle mass (good: per-type mass via PhysicsCore, no FluidSim logic).
-///   - friction=0.2 / bounciness=0.2 -> only affect collision contacts, NOT SPH.
-///     No interference unless particles collide with walls.
-///   - radius=0.10          -> keep smoothingRadius ~= 3-4x radius (0.3-0.4).
-///     Your default 1.0 is very blobby; try 0.4.
-///   - triggerEvents=true  -> only enables callbacks, does not disable SPH.
-/// PARTICLE TYPES (no FluidSim special-casing, as requested):
-///   Types come from PhysicsCore2D state, never from an if(type==X) in here.
-///   - Mass: useBodyMass reads body mass (from shape density) per particle.
-///   - Velocity: useBodyVelocity reads body linearVelocity per particle.
-///   - Type id for rendering: GetParticleTypeKey(body) quantizes gravityScale
-///     + linearDamping into a float key BenchMark can push to the shader (z).
-///     Define new fluids by changing those PhysicsCore values, not this file.
-/// KERNEL CURVE: smoothingCurve (0=center,1=edge) is baked to a 64-entry LUT.
-///   Default is a Poly6-ish smooth falloff. Edit it in the Inspector for
-///   goopier/sharper fluids. Density/force jobs only sample the LUT, so any
-///   curve is Burst-compatible.
+/// INTEGRATION MODEL (PhysicsCore2D is the boss):
+///   This script NEVER integrates positions/velocities itself. Every step it only
+///   computes SPH forces from PhysicsCore state (body.position / body.linearVelocity /
+///   body.mass) and calls body.ApplyForceToCenter(). Gravity, damping, collisions and
+///   integration all stay inside PhysicsCore2D. There is no fallback velocity estimator,
+///   no manual damping compensation, no parallel integrator in here.
+/// GRID:
+///   Full rebuild every step (counting-sort into cellStart/cellEnd + entries), feeds
+///   Burst jobs directly. UpdateParticleCell() is kept only for external queries.
+/// MASS vs (shape) DENSITY:
+///   SPH uses body.mass (authoritative). Shape density only matters at spawn time when
+///   PhysicsCore auto-computes mass from shapes (massConfiguration / ApplyMassFromShapes).
+///   Changing a shape density later does NOT change SPH unless the body mass changes.
+///   Rest density (restDensity) is an SPH parameter in units of (mass * kernelWeight),
+///   NOT a PhysicsCore density.
+/// KERNEL CURVE:
+///   Physics q = r/h (0=centre contact, 1=edge of support). The inspector curve can be
+///   mirrored with mirrorCurveX so that inspector X matches curve presets:
+///   when mirrored, inspector left = edge (q=1), inspector right = centre (q=0).
+///   Baking samples Evaluate(mirrored ? 1-q : q). Gradients are finite-differenced
+///   from the baked LUT so the sign stays correct either way.
+/// CLUSTERING NOTES:
+///   Negative pressure (rho &lt; rest) used to flip the pressure term into attraction and
+///   freeze clumps. Now clamped to >= 0 unless allowNegativePressure is set, the pressure
+///   force uses the symmetric mj*(pA/rhoA^2 + pB/rhoB^2) form, and an explicit short-range
+///   core repulsion keeps overlapped particles apart where the smooth kernel gradient -> 0.
 /// </summary>
+[DefaultExecutionOrder(PhysicsExecutionOrder.First)]
 public class FluidSim : MonoBehaviour
 {
     public enum ParticleTypeSource { None, GravityScale, LinearDamping, GravityPlusDamping }
@@ -61,47 +56,53 @@ public class FluidSim : MonoBehaviour
     public bool drawGridWhenUnselected = false;
 
     [Header("Smoothing Kernel (AnimationCurve -> LUT)")]
-    [Tooltip("Kernel weight vs normalized distance q=r/h. q=0 centre, q=1 edge. Should fall to 0 at q=1.")]
+    [Tooltip("Physics q = r/h (0 = centre contact, 1 = edge of support). With mirrorCurveX ON, inspector X is reversed: left = edge, right = centre (matches curve presets).")]
     public AnimationCurve smoothingCurve = new AnimationCurve(
-        new Keyframe(0f, 1f, 0f, 0f),
-        new Keyframe(0.35f, 0.72f, -1.2f, -1.2f),
+        new Keyframe(1f, 0f, -0.8f, -0.8f),
         new Keyframe(0.7f, 0.28f, -1.4f, -1.4f),
-        new Keyframe(1f, 0f, -0.8f, 0f));
+        new Keyframe(0.35f, 0.72f, -1.2f, -1.2f),
+        new Keyframe(0f, 1f, 0f, 0f));
+    [Tooltip("Reverse inspector X so presets read left=edge, right=centre. Physics sampling still uses q=r/h internally.")]
+    public bool mirrorCurveX = true;
     [Tooltip("LUT entries baked from the curve. Higher = smoother gradients, slightly slower bake.")]
     [Range(16, 256)] public int kernelLutSize = 64;
     [Tooltip("Re-bake LUT automatically when curve edits in Inspector.")]
     public bool autoRebakeKernel = true;
     [Header("SPH")]
-    [Tooltip("Smoothing radius h. Neighbours within h contribute.")]
+    [Tooltip("Smoothing radius h. Neighbours within h contribute. Keep ~3-4x particle radius.")]
     [Min(0.05f)] public float smoothingRadius = 0.4f;
-    [Tooltip("Fallback mass when useBodyMass finds no readable PhysicsCore mass.")]
+    [Tooltip("SPH particle mass used ONLY when useBodyMass is OFF. When ON, body.mass (PhysicsCore) is authoritative.")]
     [Min(0.001f)] public float particleMass = 1f;
-    [Tooltip("Rest density. Pressure = stiffness * (density - restDensity).")]
+    [Tooltip("SPH rest density in (bodyMass * kernelWeight) units. NOT a PhysicsCore shape density. Pressure = stiffness * max(0, density - restDensity) unless negative pressure allowed.")]
     [Min(0.01f)] public float restDensity = 4f;
     [Tooltip("Pressure stiffness k.")]
     public float gasConstant = 20f;
-    [Tooltip("Viscosity coefficient mu.")]
+    [Tooltip("Viscosity coefficient mu. PhysicsCore linearDamping still applies on top of this in the engine.")]
     public float viscosity = 1.5f;
     [Tooltip("Clamp per-particle SPH force magnitude.")]
     [Min(0f)] public float maxForce = 200f;
     public bool enablePressure = true;
     public bool enableViscosity = true;
+    [Tooltip("Allow p<0 when rho<rest (cohesive/tensile). OFF clamps p>=0 which strongly reduces permanent clumps.")]
+    public bool allowNegativePressure = false;
+    [Header("Anti-Clump (short-range core repulsion)")]
+    [Tooltip("Push overlapped pairs apart where the smooth kernel gradient -> 0. This is what breaks up stuck clusters.")]
+    public bool enableCoreRepulsion = true;
+    [Tooltip("Core radius as fraction of h. Pairs closer than this get pushed apart.")]
+    [Range(0.05f, 1f)] public float coreRadiusFraction = 0.35f;
+    [Tooltip("Core stiffness (force = stiffness * (1 - r/coreRadius) * dir). Scales with pair mass implicitly via SPH mass factor.")]
+    public float coreStiffness = 60f;
     public bool enableSPH = true;
+    [Tooltip("Apply SPH in FixedUpdate (runs BEFORE PhysicsCore simulation step thanks to execution order).")]
     public bool runInFixedUpdate = true;
 
     [Header("PhysicsCore2D particle properties (no custom types)")]
-    [Tooltip("Read per-particle mass from PhysicsCore body mass when available.")]
+    [Tooltip("Read per-particle mass from body.mass (authoritative). OFF uses particleMass fallback for all.")]
     public bool useBodyMass = true;
-    [Tooltip("Read per-particle velocity from PhysicsCore linear velocity when available.")]
-    public bool useBodyVelocity = true;
-    [Tooltip("How a float type key is derived from PhysicsCore props for rendering/grouping.")]
+    [Tooltip("Type key source for rendering/grouping only. Physics uses real body values.")]
     public ParticleTypeSource particleTypeSource = ParticleTypeSource.GravityPlusDamping;
     [Tooltip("Quantization step for the derived type key.")]
     [Min(0.001f)] public float typeQuantize = 0.05f;
-    [Tooltip("Divide SPH viscosity by (1+damping*dt) so Benchmark linearDamping does not double-damp. 0 keeps raw.")]
-    public bool compensateLinearDamping = true;
-    [Tooltip("Fallback velocityDamping used when body exposes no damping property. Mirrors Benchmark default 0.2.")]
-    public float fallbackDamping = 0.2f;
 
     [Header("Jobs / Burst")]
     [Tooltip("Run density + force passes as Burst IJobParallelFor. Off = managed fallback.")]
@@ -122,8 +123,6 @@ public class FluidSim : MonoBehaviour
     readonly List<float> _pressure = new List<float>();
     readonly List<Vector2> _sphForce = new List<Vector2>();
     readonly Dictionary<PhysicsBody, int> _particleIndex = new Dictionary<PhysicsBody, int>();
-    readonly Dictionary<PhysicsBody, Vector2> _prevPos = new Dictionary<PhysicsBody, Vector2>();
-    float _fixedDt = 0.02f;
     float[] _kernelLut = new float[64];
     float[] _kernelGradLut;
     NativeArray<float> _kernelNative;
@@ -139,14 +138,6 @@ public class FluidSim : MonoBehaviour
     NativeArray<int> _cellEndNative;
     NativeArray<int> _entriesNative;
     int _nativeCapP = -1, _nativeCapC = -1;
-    static PhysPropProbe s_massProbe = new PhysPropProbe(
-        new[] { "mass", "Mass", "bodyMass", "BodyMass", "m_mass" });
-    static PhysPropProbe s_velProbe = new PhysPropProbe(
-        new[] { "linearVelocity", "LinearVelocity", "velocity", "Velocity", "linear_velocity" });
-    static PhysPropProbe s_dampProbe = new PhysPropProbe(
-        new[] { "linearDamping", "LinearDamping", "damping", "Damping", "linear_damping" });
-    static PhysPropProbe s_gravProbe = new PhysPropProbe(
-        new[] { "gravityScale", "GravityScale", "gravity_scale" });
     public int CellsX => _cellsX;
     public int CellsY => _cellsY;
     public int ParticleCount => _particles.Count;
@@ -163,6 +154,7 @@ public class FluidSim : MonoBehaviour
         smoothingRadius = Mathf.Max(0.05f, smoothingRadius);
         particleMass = Mathf.Max(0.001f, particleMass);
         restDensity = Mathf.Max(0.01f, restDensity);
+        coreRadiusFraction = Mathf.Clamp(coreRadiusFraction, 0.05f, 1f);
         kernelLutSize = Mathf.Clamp(kernelLutSize, 16, 256);
         jobBatchSize = Mathf.Max(1, jobBatchSize);
         _cellsX = Mathf.Max(1, Mathf.CeilToInt(gridSize.x / cellSize));
@@ -175,6 +167,8 @@ public class FluidSim : MonoBehaviour
         }
     }
 
+    // Runs BEFORE PhysicsCore2D simulation (see DefaultExecutionOrder(First)):
+    // forces applied here are integrated by the engine this same step.
     void FixedUpdate() { if (runInFixedUpdate) StepPhysics(); }
 
     public void StepPhysics()
@@ -183,7 +177,6 @@ public class FluidSim : MonoBehaviour
         if (autoSyncSource != null) SyncFromBenchmark(autoSyncSource, autoSyncRemoveMissing);
         if (_kernelDirty) BakeKernel();
         if (!enableSPH || _particles.Count == 0) return;
-        _fixedDt = Application.isPlaying ? Mathf.Max(Time.fixedDeltaTime, 1e-5f) : 0.02f;
         PruneNulls();
         EnsureSphCapacity();
         RebuildGridFull();
@@ -203,7 +196,10 @@ public class FluidSim : MonoBehaviour
         for (int i = 0; i < n; i++)
         {
             float q = (float)i / (n - 1);
-            _kernelLut[i] = Mathf.Max(0f, smoothingCurve.Evaluate(q));
+            // Inspector X is mirrored when mirrorCurveX: inspector 0 = edge (q=1),
+            // inspector 1 = centre (q=0). Physics sampling always uses q = r/h.
+            float sampleX = mirrorCurveX ? 1f - q : q;
+            _kernelLut[i] = Mathf.Max(0f, smoothingCurve.Evaluate(sampleX));
         }
         _kernelLut[n - 1] = 0f;
         _kernelGradLut = new float[n];
@@ -232,92 +228,42 @@ public class FluidSim : MonoBehaviour
     }
     public float SampleKernel(float q) { return SampleLut(_kernelLut, q); }
     public float SampleKernelGradient(float q) { return SampleLut(_kernelGradLut, q); }
-    sealed class PhysPropProbe
-    {
-        readonly string[] _names;
-        PropertyInfo[] _props; FieldInfo[] _fields; bool _resolved;
-        public PhysPropProbe(string[] names) { _names = names; }
-        void Resolve(System.Type t)
-        {
-            _props = new PropertyInfo[_names.Length];
-            _fields = new FieldInfo[_names.Length];
-            for (int i = 0; i < _names.Length; i++)
-            {
-                _props[i] = t.GetProperty(_names[i], BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (_props[i] == null)
-                    _fields[i] = t.GetField(_names[i], BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            }
-            _resolved = true;
-        }
-        public bool TryGetFloat(object o, out float v)
-        {
-            v = 0f; if (o == null) return false;
-            if (!_resolved) Resolve(o.GetType());
-            for (int i = 0; i < _names.Length; i++)
-            {
-                try
-                {
-                    object val = _props[i] != null ? _props[i].GetValue(o, null)
-                        : _fields[i] != null ? _fields[i].GetValue(o) : null;
-                    if (val is float f) { v = f; return true; }
-                    if (val is double d) { v = (float)d; return true; }
-                    if (val is int ii) { v = ii; return true; }
-                }
-                catch { }
-            }
-            return false;
-        }
-        public bool TryGetVec(object o, out Vector2 v)
-        {
-            v = Vector2.zero; if (o == null) return false;
-            if (!_resolved) Resolve(o.GetType());
-            for (int i = 0; i < _names.Length; i++)
-            {
-                try
-                {
-                    object val = _props[i] != null ? _props[i].GetValue(o, null)
-                        : _fields[i] != null ? _fields[i].GetValue(o) : null;
-                    if (val is Vector2 vv) { v = vv; return true; }
-                    if (val is float2 f2) { v = new Vector2(f2.x, f2.y); return true; }
-                }
-                catch { }
-            }
-            return false;
-        }
-    }
 
+    /// <summary>SPH particle mass. body.mass (PhysicsCore) is authoritative when useBodyMass is on.</summary>
     public float GetBodyMass(PhysicsBody b)
     {
-        float v;
-        if (useBodyMass && (object)b != null && s_massProbe.TryGetFloat(b, out v) && v > 1e-6f && v < 1e6f) return v;
+        if (useBodyMass && IsValidBody(b))
+        {
+            float m = b.mass;
+            if (m > 1e-6f && m < 1e6f) return m;
+        }
         return particleMass;
     }
-    Vector2 EstimateVelocityFallback(PhysicsBody b)
+    static bool IsValidBody(PhysicsBody b)
     {
-        Vector2 p; if (!_prevPos.TryGetValue(b, out p)) return Vector2.zero;
-        if (_fixedDt <= 1e-6f) return Vector2.zero;
-        return (b.position - p) / _fixedDt;
+        // PhysicsBody is a struct handle: (object)b is never null, so check validity instead.
+        try { return b.isValid; } catch { return false; }
     }
     public Vector2 GetBodyVelocity(PhysicsBody b)
     {
-        Vector2 fv = EstimateVelocityFallback(b);
-        if (!useBodyVelocity || (object)b == null) return fv;
-        Vector2 v; if (s_velProbe.TryGetVec(b, out v) && v.sqrMagnitude < 1e7f) return v;
-        return fv;
+        // PhysicsCore owns velocity. No fallback estimator: if the body is gone, return zero.
+        if (!IsValidBody(b)) return Vector2.zero;
+        Vector2 v = b.linearVelocity;
+        return v.sqrMagnitude < 1e7f ? v : Vector2.zero;
     }
     public float GetBodyDamping(PhysicsBody b)
     {
-        float v; if (s_dampProbe.TryGetFloat(b, out v)) return Mathf.Max(0f, v);
-        return fallbackDamping;
+        if (!IsValidBody(b)) return 0f;
+        return Mathf.Max(0f, b.linearDamping);
     }
     public float GetBodyGravity(PhysicsBody b)
     {
-        float v; if (s_gravProbe.TryGetFloat(b, out v)) return v;
-        return 1f;
+        if (!IsValidBody(b)) return 1f;
+        return b.gravityScale;
     }
     public float GetParticleTypeKey(PhysicsBody b)
     {
-        if ((object)b == null) return 0f;
+        if (!IsValidBody(b)) return 0f;
         float q = Mathf.Max(typeQuantize, 0.001f);
         float g = GetBodyGravity(b), d = GetBodyDamping(b);
         switch (particleTypeSource)
@@ -340,7 +286,7 @@ public class FluidSim : MonoBehaviour
         for (int i = 0; i < _particles.Count; i++)
         {
             PhysicsBody b = _particles[i];
-            if ((object)b == null) continue;
+            if (!IsValidBody(b)) continue;
             int idx = GetCellIndexForPosition(b.position);
             _particleCell[b] = idx;
             if (idx >= 0) _cells[idx].Add(b);
@@ -379,10 +325,9 @@ public class FluidSim : MonoBehaviour
     {
         for (int i = _particles.Count - 1; i >= 0; i--)
         {
-            if ((object)_particles[i] == null)
+            if (!IsValidBody(_particles[i]))
             {
                 try { _particleCell.Remove(_particles[i]); } catch { }
-                try { _prevPos.Remove(_particles[i]); } catch { }
                 _particles.RemoveAt(i);
             }
         }
@@ -391,7 +336,7 @@ public class FluidSim : MonoBehaviour
     {
         _particleIndex.Clear();
         for (int i = 0; i < _particles.Count; i++)
-            if ((object)_particles[i] != null) _particleIndex[_particles[i]] = i;
+            if (IsValidBody(_particles[i])) _particleIndex[_particles[i]] = i;
         int n = _particles.Count;
         while (_density.Count < n) _density.Add(0f);
         while (_pressure.Count < n) _pressure.Add(0f);
@@ -511,8 +456,8 @@ public class FluidSim : MonoBehaviour
                             int j = entries[e]; if (j == i) continue;
                             float2 d = p - pos[j];
                             float r2 = d.x * d.x + d.y * d.y;
-                            if (r2 >= h2 || r2 < 1e-12f) continue;
-                            float q = math.sqrt(r2) / h;
+                            if (r2 >= h2) continue;
+                            float q = math.sqrt(math.max(r2, 0f)) / h;
                             float qq = math.clamp(q, 0f, 1f);
                             float ff = qq * (lutN - 1);
                             int k = (int)ff;
@@ -532,6 +477,7 @@ public class FluidSim : MonoBehaviour
     {
         [ReadOnly] public NativeArray<float2> pos;
         [ReadOnly] public NativeArray<float2> vel;
+        [ReadOnly] public NativeArray<float> mass;
         [ReadOnly] public NativeArray<float> density;
         [ReadOnly] public NativeArray<float> pressure;
         [ReadOnly] public NativeArray<int> cellStart;
@@ -540,8 +486,8 @@ public class FluidSim : MonoBehaviour
         [ReadOnly] public NativeArray<float> kernelGrad;
         public int cellsX, cellsY, span, lutN;
         public float2 origin, cellSz;
-        public float h, h2, visc, maxF;
-        public int doP, doV;
+        public float h, h2, visc, maxF, coreR, coreK;
+        public int doP, doV, doCore;
         public NativeArray<float2> force;
         public void Execute(int i)
         {
@@ -565,7 +511,15 @@ public class FluidSim : MonoBehaviour
                             int j = entries[e]; if (j == i) continue;
                             float2 delta = p - pos[j];
                             float r2 = delta.x * delta.x + delta.y * delta.y;
-                            if (r2 >= h2 || r2 < 1e-12f) continue;
+                            if (r2 >= h2) continue;
+                            float mj = mass[j];
+                            if (r2 < 1e-12f)
+                            {
+                                // Exactly overlapped: push apart along an arbitrary axis.
+                                if (doCore == 1 && coreK > 0f && coreR > 1e-6f)
+                                    f += new float2(coreK, 0f);
+                                continue;
+                            }
                             float r = math.sqrt(r2);
                             float2 dir = delta / r;
                             float rhoB = math.max(density[j], 1e-5f);
@@ -575,8 +529,12 @@ public class FluidSim : MonoBehaviour
                             if (k < 0) k = 0; if (k >= lutN - 1) k = lutN - 2;
                             float tt = ff - k;
                             float gw = (kernelGrad[k] * (1f - tt) + kernelGrad[k + 1] * tt) / h;
-                            if (doP == 1) f -= ((pA + pressure[j]) / (2f * rhoB)) * gw * dir;
-                            if (doV == 1) f += visc * (vel[j] - vel[i]) / rhoB * math.abs(gw);
+                            // Symmetric SPH pressure: mass-weighted, stable under varied masses.
+                            if (doP == 1) f -= mj * (pA / (rhoA * rhoA) + pressure[j] / (rhoB * rhoB)) * gw * dir;
+                            if (doV == 1) f += mj * visc * (vel[j] - vel[i]) / rhoB * math.abs(gw);
+                            // Short-range core repulsion: finite push where smooth grad -> 0.
+                            if (doCore == 1 && coreK > 0f && coreR > 1e-6f && r < coreR)
+                                f += dir * (coreK * (1f - r / coreR));
                         }
                     }
                 }
@@ -585,6 +543,11 @@ public class FluidSim : MonoBehaviour
             if (maxF > 0f && l2 > maxF * maxF) f = f / math.sqrt(l2) * maxF;
             force[i] = f;
         }
+    }
+    float ComputePressure(float rho)
+    {
+        float p = gasConstant * (rho - restDensity);
+        return allowNegativePressure ? p : Mathf.Max(0f, p);
     }
     void ApplySPHBurst()
     {
@@ -607,19 +570,23 @@ public class FluidSim : MonoBehaviour
         for (int i = 0; i < n; i++)
         {
             _density[i] = _densNative[i];
-            _pressure[i] = Mathf.Max(0f, gasConstant * (_densNative[i] - restDensity));
+            _pressure[i] = ComputePressure(_densNative[i]);
             _pressNative[i] = _pressure[i];
         }
+        float coreR = h * Mathf.Clamp01(coreRadiusFraction);
         var fj = new ForceJob
         {
-            pos = _posNative, vel = _velNative, density = _densNative, pressure = _pressNative,
+            pos = _posNative, vel = _velNative, mass = _massNative,
+            density = _densNative, pressure = _pressNative,
             cellStart = _cellStartNative, cellEnd = _cellEndNative, entries = _entriesNative,
             kernelGrad = _kernelGradNative, cellsX = _cellsX, cellsY = _cellsY, span = span,
             lutN = _kernelGradNative.Length,
             origin = new float2(gridOrigin.x, gridOrigin.y),
             cellSz = new float2(cellSize, cellSize),
             h = h, h2 = h * h, visc = viscosity, maxF = maxForce,
-            doP = enablePressure ? 1 : 0, doV = enableViscosity ? 1 : 0, force = _forceNative
+            coreR = coreR, coreK = coreStiffness,
+            doP = enablePressure ? 1 : 0, doV = enableViscosity ? 1 : 0,
+            doCore = enableCoreRepulsion ? 1 : 0, force = _forceNative
         };
         fj.Schedule(n, Mathf.Max(1, jobBatchSize)).Complete();
         for (int i = 0; i < n; i++)
@@ -628,8 +595,8 @@ public class FluidSim : MonoBehaviour
             float2 f = _forceNative[i];
             Vector2 fv = new Vector2(f.x, f.y);
             _sphForce[i] = fv;
-            if (fv.sqrMagnitude >= 1e-10f) b.ApplyForce(fv, b.position);
-            _prevPos[b] = b.position;
+            // PhysicsCore integrates: we only add force at the centre (no torque).
+            if (fv.sqrMagnitude >= 1e-10f) b.ApplyForceToCenter(fv, true);
         }
     }
     void ApplySPHManaged()
@@ -641,8 +608,7 @@ public class FluidSim : MonoBehaviour
         {
             PhysicsBody b = _particles[i];
             Vector2 f = _sphForce[i];
-            if (f.sqrMagnitude >= 1e-10f) b.ApplyForce(f, b.position);
-            _prevPos[b] = b.position;
+            if (f.sqrMagnitude >= 1e-10f) b.ApplyForceToCenter(f, true);
         }
     }
     public void ComputeSPHDensitiesManaged()
@@ -669,10 +635,10 @@ public class FluidSim : MonoBehaviour
                     for (int k = 0; k < cell.Count; k++)
                     {
                         PhysicsBody b = cell[k];
-                        if ((object)b == null || b.Equals(a)) continue;
+                        if (!IsValidBody(b) || b.Equals(a)) continue;
                         float r = (pa - b.position).magnitude;
-                        if (r >= h || r < 1e-6f) continue;
-                        rho += GetBodyMass(b) * SampleKernel(r / h);
+                        if (r >= h) continue;
+                        rho += GetBodyMass(b) * SampleKernel(Mathf.Min(r, h * 0.999f) / h);
                     }
                 }
             }
@@ -681,18 +647,21 @@ public class FluidSim : MonoBehaviour
     }
     public void ComputeSPHPressuresManaged()
     {
+        // Clamped by default: rho < rest would otherwise create suction that locks clumps.
         for (int i = 0; i < _particles.Count; i++)
-            _pressure[i] = gasConstant * (_density[i] - restDensity);
+            _pressure[i] = ComputePressure(_density[i]);
     }
     public void ComputeSPHForcesManaged()
     {
         float h = Mathf.Max(0.05f, smoothingRadius);
+        float coreR = h * Mathf.Clamp01(coreRadiusFraction);
         for (int i = 0; i < _particles.Count; i++)
         {
             PhysicsBody a = _particles[i];
             Vector2 pa = a.position;
             Vector2 va = GetBodyVelocity(a);
             float rhoA = Mathf.Max(_density[i], 1e-5f);
+            float pA = _pressure[i];
             Vector2 f = Vector2.zero;
             int cx, cy;
             if (!WorldToCell(pa, out cx, out cy)) { _sphForce[i] = f; continue; }
@@ -707,23 +676,28 @@ public class FluidSim : MonoBehaviour
                     for (int k = 0; k < cell.Count; k++)
                     {
                         PhysicsBody b = cell[k];
-                        if ((object)b == null || b.Equals(a)) continue;
+                        if (!IsValidBody(b) || b.Equals(a)) continue;
                         Vector2 delta = pa - b.position;
                         float r = delta.magnitude;
-                        if (r >= h || r < 1e-6f) continue;
+                        if (r >= h) continue;
+                        float mj = GetBodyMass(b);
+                        if (r < 1e-6f)
+                        {
+                            // Exactly overlapped: push apart along +X.
+                            if (enableCoreRepulsion) f.x += coreStiffness;
+                            continue;
+                        }
                         Vector2 dir = delta / r;
                         int j; _particleIndex.TryGetValue(b, out j);
                         float rhoB = (j >= 0 && j < _density.Count) ? Mathf.Max(_density[j], 1e-5f) : rhoA;
-                        float pB = (j >= 0 && j < _pressure.Count) ? _pressure[j] : _pressure[i];
+                        float pB = (j >= 0 && j < _pressure.Count) ? _pressure[j] : pA;
                         float gw = SampleKernelGradient(r / h) / h;
-                        if (enablePressure) f -= ((_pressure[i] + pB) / (2f * rhoB)) * gw * dir;
-                        if (enableViscosity)
-                        {
-                            Vector2 vb = GetBodyVelocity(b);
-                            float comp = 1f;
-                            if (compensateLinearDamping) comp = 1f + GetBodyDamping(b) * _fixedDt;
-                            f += (viscosity / comp) * (vb - va) / rhoB * Mathf.Abs(gw);
-                        }
+                        // Symmetric form: mj * (pA/rhoA^2 + pB/rhoB^2), mass-aware.
+                        if (enablePressure) f -= mj * (pA / (rhoA * rhoA) + pB / (rhoB * rhoB)) * gw * dir;
+                        // No manual damping compensation: PhysicsCore owns linearDamping.
+                        if (enableViscosity) f += mj * viscosity * (GetBodyVelocity(b) - va) / rhoB * Mathf.Abs(gw);
+                        if (enableCoreRepulsion && coreR > 1e-6f && r < coreR)
+                            f += dir * (coreStiffness * (1f - r / coreR));
                     }
                 }
             }
@@ -734,12 +708,12 @@ public class FluidSim : MonoBehaviour
     #region Public API (kept compatible)
     public bool Contains(PhysicsBody body)
     {
-        if ((object)body == null) return false;
+        if (!IsValidBody(body)) return false;
         return _particleCell.ContainsKey(body);
     }
     public bool AddParticle(PhysicsBody body)
     {
-        if ((object)body == null || _particleCell.ContainsKey(body)) return false;
+        if (!IsValidBody(body) || _particleCell.ContainsKey(body)) return false;
         if (_cells == null) BuildGrid();
         _particles.Add(body);
         int idx = GetCellIndexForPosition(body.position);
@@ -756,16 +730,16 @@ public class FluidSim : MonoBehaviour
     }
     public bool RemoveParticle(PhysicsBody body)
     {
-        if ((object)body == null) return false;
+        if (!IsValidBody(body)) return false;
         int idx; if (!_particleCell.TryGetValue(body, out idx)) return false;
         if (idx >= 0 && _cells != null && idx < _cells.Length) _cells[idx].Remove(body);
         _particleCell.Remove(body); _particles.Remove(body);
-        _prevPos.Remove(body); _particleIndex.Clear();
+        _particleIndex.Clear();
         return true;
     }
     public void ClearParticles()
     {
-        _particles.Clear(); _particleCell.Clear(); _prevPos.Clear(); _particleIndex.Clear();
+        _particles.Clear(); _particleCell.Clear(); _particleIndex.Clear();
         _density.Clear(); _pressure.Clear(); _sphForce.Clear();
         ClearCells();
     }
@@ -774,7 +748,7 @@ public class FluidSim : MonoBehaviour
         if (source == null || source.Bodies == null) return;
         var src = source.Bodies;
         for (int i = 0; i < src.Count; i++)
-            if ((object)src[i] != null && !_particleCell.ContainsKey(src[i])) AddParticle(src[i]);
+            if (IsValidBody(src[i]) && !_particleCell.ContainsKey(src[i])) AddParticle(src[i]);
         if (removeMissing)
         {
             var set = new HashSet<PhysicsBody>(src);
@@ -784,7 +758,7 @@ public class FluidSim : MonoBehaviour
     }
     public bool UpdateParticleCell(PhysicsBody body)
     {
-        if ((object)body == null || _cells == null) return false;
+        if (!IsValidBody(body) || _cells == null) return false;
         int oldIdx; if (!_particleCell.TryGetValue(body, out oldIdx)) return false;
         int ni = GetCellIndexForPosition(body.position);
         if (ni == oldIdx) return false;
@@ -797,7 +771,7 @@ public class FluidSim : MonoBehaviour
     public void GetNeighbours(PhysicsBody body, List<PhysicsBody> outN, float radius)
     {
         outN.Clear();
-        if ((object)body == null || _cells == null) return;
+        if (!IsValidBody(body) || _cells == null) return;
         int cx, cy; if (!WorldToCell(body.position, out cx, out cy)) return;
         int span = radius <= 0f ? 1 : Mathf.Max(1, Mathf.CeilToInt(radius / Mathf.Max(0.0001f, cellSize)));
         float r2 = radius * radius; Vector2 p = body.position;
@@ -811,7 +785,7 @@ public class FluidSim : MonoBehaviour
                 for (int i = 0; i < cell.Count; i++)
                 {
                     var o = cell[i];
-                    if ((object)o == null || o.Equals(body)) continue;
+                    if (!IsValidBody(o) || o.Equals(body)) continue;
                     if (radius > 0f && (o.position - p).sqrMagnitude >= r2) continue;
                     outN.Add(o);
                 }
@@ -848,7 +822,7 @@ public class FluidSim : MonoBehaviour
     public void ApplySPH(PhysicsBody body)
     {
         Vector2 f = ComputeSPHForce(body);
-        if (f.sqrMagnitude >= 1e-10f) body.ApplyForce(f, body.position);
+        if (f.sqrMagnitude >= 1e-10f) body.ApplyForceToCenter(f, true);
     }
     public void ApplySPHToAll() { StepPhysics(); }
     public void ComputeSPHDensities() { ComputeSPHDensitiesManaged(); }

@@ -21,16 +21,18 @@ public class BenchMark : MonoBehaviour
     [Header("Particle Properties")]
     [Tooltip("Radius of the spawned circle shape. Applies to newly spawned bodies. Changing radius requires respawn (geometry).")]
     public float particleRadius = 0.10f;
-    [Tooltip("Density/weight of the shape. Also applied to already-spawned bodies when Apply is used.")]
+    [Tooltip("Body mass each particle is spawned with. This is what FluidSim SPH reads (body.mass).")]
+    public float particleMass = 1f;
+    [Tooltip("Shape density is only used by PhysicsCore to auto-compute mass. If particleMassOverrideAtSpawn is on, body mass is set explicitly AFTER shape creation and stays authoritative for SPH — later shape density edits do not change SPH unless body mass changes.")]
     public float particleDensity = 0.2f;
+    [Tooltip("When true, explicitly set body.mass = particleMass after creating the shape so the body mass is exact regardless of shape auto-mass.")]
+    public bool particleMassOverrideAtSpawn = true;
     [Tooltip("Friction of the shape surface material.")]
     public float particleFriction = 0.2f;
     [Tooltip("Bounciness of the shape surface material.")]
     public float particleBounciness = 0.2f;
     [Tooltip("Color of the shape surface material (customColor).")]
     public Color particleColor = Color.red;
-    [Tooltip("Mass of the body (massConfiguration.mass).")]
-    public float particleMass = 1f;
     [Tooltip("Linear damping of the body.")]
     public float particleLinearDamping = 0.2f;
     [Tooltip("Gravity scale of the body.")]
@@ -183,17 +185,18 @@ public class BenchMark : MonoBehaviour
     void ApplyParticlePropertiesToIndexedBody(int index, bool hasShape)
     {
         PhysicsBody body = _bodiesOrdered[index];
-        if (body == null) return;
+        if (!body.isValid) return;
 
-        TrySetMember(body, "linearDamping", particleLinearDamping);
-        TrySetMember(body, "gravityScale", particleGravityScale);
-        TrySetMember(body, "mass", particleMass);
+        body.linearDamping = particleLinearDamping;
+        body.gravityScale = particleGravityScale;
+        // Mass is authoritative for SPH (FluidSim reads body.mass). Set it LAST so shape
+        // edits above cannot overwrite it via auto-mass.
+        if (particleMass > 1e-6f) body.mass = particleMass;
 
-        // constraints is an enum on PhysicsBody; set via Enum parse-safe path.
-        object rotationFlag = GetEnumValue(typeof(PhysicsBody.BodyConstraints), "Rotation");
-        object noneFlag = GetEnumValue(typeof(PhysicsBody.BodyConstraints), "None");
-        if (rotationFlag != null && noneFlag != null)
-            TrySetMember(body, "constraints", particleFreezeRotation ? rotationFlag : noneFlag);
+        // constraints is an enum on PhysicsBody; set directly (typed, no reflection).
+        body.constraints = particleFreezeRotation
+            ? PhysicsBody.BodyConstraints.Rotation
+            : PhysicsBody.BodyConstraints.None;
 
         if (!hasShape) return;
 
@@ -348,6 +351,9 @@ public class BenchMark : MonoBehaviour
                 new CircleGeometry { center = Vector2.zero, radius = particleRadius },
                 shapeDef
             );
+            // Body mass is authoritative for SPH (FluidSim reads body.mass).
+            // Set AFTER shape creation so auto-mass from shape density cannot override it.
+            if (particleMassOverrideAtSpawn && particleMass > 1e-6f) body.mass = particleMass;
             _bodiesOrdered.Add(body);
             _shapesOrdered.Add(createdShape);
             _bodyTypesOrdered.Add(defaultParticleType);
