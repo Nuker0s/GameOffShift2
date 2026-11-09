@@ -351,7 +351,6 @@ Transform:
   m_Children:
   - {fileID: 458502833}
   - {fileID: 1836580603}
-  - {fileID: 1264070959}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &519420033
@@ -371,7 +370,20 @@ MonoBehaviour:
   spawnPerFrame: 10
   spacing: 0.3
   batchDelay: 0
+  particleRadius: 0.1
+  particleDensity: 0.2
+  particleFriction: 0
+  particleBounciness: 0
+  particleColor: {r: 1, g: 0, b: 0, a: 1}
+  particleMass: 0.1
+  particleLinearDamping: 0
+  particleGravityScale: 1
+  particleTriggerEvents: 1
+  particleFreezeRotation: 1
+  applyParticlePropertiesNow: 0
+  liveUpdateExistingParticles: 0
   defaultParticleType: 1
+  applyParticleTypeToExisting: 0
   metaballPlaneRenderer: {fileID: 1836580605}
   metaballMaterialOverride: {fileID: 2100000, guid: aeaa802174194684886953f820cc25ff, type: 2}
   metaballBufferInitialCapacity: 512
@@ -403,7 +415,7 @@ MonoBehaviour:
   maxBounds: {x: 50, y: 50, z: 50}
   sphere: {fileID: 1005268992}
   fingerMoveMultiplier: 10
-  forceMultiplier: 3
+  forceMultiplier: 1
 --- !u!114 &519420035
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -418,12 +430,72 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::FluidSim
   gridOrigin: {x: -12.4, y: -31}
   gridSize: {x: 23.1, y: 44.6}
-  cellSize: 2
-  enableRepulsion: 1
-  repulsionRadius: 0.6
-  repulsionStrength: 10
+  cellSize: 0.5
+  showGridGizmo: 1
+  drawGridWhenUnselected: 0
+  smoothingCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.35
+      value: 0.72
+      inSlope: -1.2
+      outSlope: -1.2
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 0.7
+      value: 0.28
+      inSlope: -1.4
+      outSlope: -1.4
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: -0.8
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  kernelLutSize: 64
+  autoRebakeKernel: 1
+  smoothingRadius: 1
+  particleMass: 1
+  restDensity: 2
+  gasConstant: 20
+  viscosity: 1.5
+  maxForce: 1
+  enablePressure: 1
+  enableViscosity: 1
+  enableSPH: 1
   runInFixedUpdate: 1
-  autoSyncSource: {fileID: 0}
+  useBodyMass: 1
+  useBodyVelocity: 1
+  particleTypeSource: 3
+  typeQuantize: 0.05
+  compensateLinearDamping: 1
+  fallbackDamping: 0.2
+  useBurstJobs: 1
+  jobBatchSize: 64
+  autoSyncSource: {fileID: 519420033}
   autoSyncRemoveMissing: 0
 --- !u!1 &553368668
 GameObject:
@@ -987,7 +1059,7 @@ MonoBehaviour:
   m_DefinitionAsset: {fileID: 0}
   m_Definition:
     m_BodyType: 0
-    m_BodyConstraints: 0
+    m_BodyConstraints: 4
     m_TransformWriteMode: 1
     m_Position: {x: 0, y: 0}
     m_Rotation:
@@ -1159,6 +1231,202 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_SpriteSortPoint: 0
   m_BlendShapeWeights: []
+--- !u!1 &1145265393
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1145265394}
+  - component: {fileID: 1145265396}
+  - component: {fileID: 1145265395}
+  m_Layer: 0
+  m_Name: Square (4)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1145265394
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1145265393}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 4.73912, y: 37.2, z: 0}
+  m_LocalScale: {x: 44.2, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1264070959}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1145265395
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1145265393}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5b5cab806479227418445289d7193e6b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.U2D.Physics::Unity.U2D.Physics.PhysicsPose
+  m_Source: 0
+  m_SimulationWorld: {fileID: 0}
+  onBodyUpdate:
+    m_PersistentCalls:
+      m_Calls: []
+  m_UserData:
+    m_EntityId:
+      m_rawData: 0
+    m_PhysicsMask:
+      bitMask: 0
+    m_Float: 0
+    m_Int: 0
+    m_Int64: 0
+    m_Vector3Int: {x: 0, y: 0, z: 0}
+    m_Bool: 0
+  m_CallbackSource: 0
+  m_CallbackTarget: {fileID: 0}
+  m_DefinitionAsset: {fileID: 0}
+  m_Definition:
+    m_BodyType: 2
+    m_BodyConstraints: 0
+    m_TransformWriteMode: 1
+    m_Position: {x: 0, y: 0}
+    m_Rotation:
+      direction: {x: 1, y: 0}
+    m_LinearVelocity: {x: 0, y: 0}
+    m_AngularVelocity: 0
+    m_LinearDamping: 0
+    m_AngularDamping: 0
+    m_GravityScale: 1
+    m_SleepThreshold: 0.05
+    m_CollisionThreshold: 0.5
+    m_FastCollisionsAllowed: 0
+    m_FastRotationAllowed: 0
+    m_ContactRecyclingAllowed: 1
+    m_SleepingAllowed: 1
+    m_Awake: 1
+    m_Enabled: 1
+    m_WorldDrawing: 1
+    m_MassOverride: 0
+    m_MassConfiguration:
+      m_Mass: 1
+      m_Center: {x: 0, y: 0}
+      m_RotationalInertia: 1
+    m_DrawTarget: 0
+    m_DrawDepth: 0
+  m_Composite: {fileID: 0}
+--- !u!114 &1145265396
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1145265393}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 56a4af6a834fddd40a7fadd3c55e0b0e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.U2D.Physics::Unity.U2D.Physics.PhysicsAreaPolygon
+  m_Source: 0
+  m_Pose: {fileID: 1145265395}
+  m_Transformation:
+    m_Transform:
+      position: {x: 0, y: 0}
+      rotation:
+        direction: {x: 1, y: 0}
+    m_Scale: 1
+    m_ScaleRadius: 1
+  m_UserData:
+    m_EntityId:
+      m_rawData: 0
+    m_PhysicsMask:
+      bitMask: 0
+    m_Float: 0
+    m_Int: 0
+    m_Int64: 0
+    m_Vector3Int: {x: 0, y: 0, z: 0}
+    m_Bool: 0
+  m_CallbackSource: 0
+  m_CallbackTarget: {fileID: 0}
+  m_AreasOnly: 1
+  m_DefinitionAsset: {fileID: 0}
+  m_Definition:
+    contactFilter:
+      m_Categories:
+        bitMask: 1
+      m_Contacts:
+        bitMask: 18446744073709551615
+      m_GroupIndex: 0
+    surfaceMaterial:
+      m_Friction: 0.6
+      m_Bounciness: 0
+      m_FrictionMixing: 1
+      m_BouncinessMixing: 4
+      m_FrictionPriority: 0
+      m_BouncinessPriority: 0
+      m_RollingResistance: 0
+      m_TangentSpeed: 0
+      m_CustomColor:
+        serializedVersion: 2
+        rgba: 0
+    m_Density: 1
+    m_IsTrigger: 0
+    m_TriggerEvents: 0
+    m_ContactEvents: 0
+    m_HitEvents: 0
+    m_ContactFilterCallbacks: 0
+    m_PreContactCallbacks: 0
+    m_StartStaticContacts: 1
+    m_StartMassUpdate: 1
+    m_WorldDrawing: 1
+    moverData:
+      m_PushLimit: 1000000
+      m_ClipVelocity: 1
+  m_ContactAsset: {fileID: 0}
+  m_MaterialAsset: {fileID: 0}
+  onContactBegin:
+    m_PersistentCalls:
+      m_Calls: []
+  onContactEnd:
+    m_PersistentCalls:
+      m_Calls: []
+  onTriggerBegin:
+    m_PersistentCalls:
+      m_Calls: []
+  onTriggerEnd:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Geometry:
+    vertices:
+      m_Vertex0: {x: -0.5, y: -0.5}
+      m_Vertex1: {x: 0.5, y: -0.5}
+      m_Vertex2: {x: 0.5, y: 0.5}
+      m_Vertex3: {x: -0.5, y: 0.5}
+      m_Vertex4: {x: 0, y: 0}
+      m_Vertex5: {x: 0, y: 0}
+      m_Vertex6: {x: 0, y: 0}
+      m_Vertex7: {x: 0, y: 0}
+    normals:
+      m_Vertex0: {x: 0, y: -1}
+      m_Vertex1: {x: 1, y: 0}
+      m_Vertex2: {x: 0, y: 1}
+      m_Vertex3: {x: -1, y: 0}
+      m_Vertex4: {x: 0, y: 0}
+      m_Vertex5: {x: 0, y: 0}
+      m_Vertex6: {x: 0, y: 0}
+      m_Vertex7: {x: 0, y: 0}
+    m_Centroid: {x: 0, y: 0}
+    m_Radius: 0
+    m_Count: 4
+  m_GeometryAsset: {fileID: 0}
 --- !u!1 &1264070958
 GameObject:
   m_ObjectHideFlags: 0
@@ -1184,14 +1452,15 @@ Transform:
   m_GameObject: {fileID: 1264070958}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -4.73912, y: -23.5098, z: 10}
+  m_LocalPosition: {x: -4.73912, y: -23.5098, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1398099619}
+  - {fileID: 1145265394}
   - {fileID: 553368671}
   - {fileID: 599392186}
-  m_Father: {fileID: 519420032}
+  m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1398099616
 GameObject:
@@ -1508,4 +1777,5 @@ SceneRoots:
   m_Roots:
   - {fileID: 619394802}
   - {fileID: 1005268991}
+  - {fileID: 1264070959}
   - {fileID: 519420032}

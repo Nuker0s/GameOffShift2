@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using Unity.U2D.Physics;
 using Unity.U2D.Physics.Assets;
@@ -17,9 +18,37 @@ public class BenchMark : MonoBehaviour
     public float batchDelay = 0f;
     bool IsSpawning = false;
 
+    [Header("Particle Properties")]
+    [Tooltip("Radius of the spawned circle shape. Applies to newly spawned bodies. Changing radius requires respawn (geometry).")]
+    public float particleRadius = 0.10f;
+    [Tooltip("Density/weight of the shape. Also applied to already-spawned bodies when Apply is used.")]
+    public float particleDensity = 0.2f;
+    [Tooltip("Friction of the shape surface material.")]
+    public float particleFriction = 0.2f;
+    [Tooltip("Bounciness of the shape surface material.")]
+    public float particleBounciness = 0.2f;
+    [Tooltip("Color of the shape surface material (customColor).")]
+    public Color particleColor = Color.red;
+    [Tooltip("Mass of the body (massConfiguration.mass).")]
+    public float particleMass = 1f;
+    [Tooltip("Linear damping of the body.")]
+    public float particleLinearDamping = 0.2f;
+    [Tooltip("Gravity scale of the body.")]
+    public float particleGravityScale = 1f;
+    [Tooltip("If true, shape trigger events are enabled.")]
+    public bool particleTriggerEvents = true;
+    [Tooltip("If true, rotation is frozen (constraints = Rotation).")]
+    public bool particleFreezeRotation = true;
+    [Tooltip("Click (set true) to push the above properties to already-spawned bodies/shapes.")]
+    public bool applyParticlePropertiesNow = false;
+    [Tooltip("If true, any inspector change to the properties above auto-applies to already-spawned bodies every frame / on validate.")]
+    public bool liveUpdateExistingParticles = false;
+
     [Header("Particle Types")]
     [Tooltip("Type id assigned to newly spawned bodies. Stored in Vector3.z sent to the shader.")]
     public float defaultParticleType = 0f;
+    [Tooltip("Click (set true) to push Default Particle Type to ALL already-spawned bodies.")]
+    public bool applyParticleTypeToExisting = false;
 
     [Header("Metaball Rendering")]
     [Tooltip("Renderer of the plane/quad that draws the metaballs (uses world-space XY).")]
@@ -43,6 +72,7 @@ public class BenchMark : MonoBehaviour
 
     private readonly List<PhysicsBody> _bodiesOrdered = new List<PhysicsBody>();
     private readonly List<float> _bodyTypesOrdered = new List<float>();
+    private readonly List<PhysicsShape> _shapesOrdered = new List<PhysicsShape>();
 
     // CPU mirror of GPU data: xy = world XY, z = type id.
     private Vector3[] _metaballData;
@@ -68,6 +98,31 @@ public class BenchMark : MonoBehaviour
             spawn = false;
             Spawn();
         }
+
+        if (applyParticlePropertiesNow)
+        {
+            applyParticlePropertiesNow = false;
+            ApplyParticlePropertiesToSpawnedBodies();
+        }
+
+        if (applyParticleTypeToExisting)
+        {
+            applyParticleTypeToExisting = false;
+            ApplyParticleTypeToAllBodies();
+        }
+
+        if (liveUpdateExistingParticles)
+        {
+            ApplyParticlePropertiesToSpawnedBodies();
+        }
+    }
+
+    void OnValidate()
+    {
+        if (liveUpdateExistingParticles && Application.isPlaying)
+        {
+            ApplyParticlePropertiesToSpawnedBodies();
+        }
     }
 
     void LateUpdate()
@@ -92,10 +147,146 @@ public class BenchMark : MonoBehaviour
     /// <summary>Read-only access to bodies for type bookkeeping / debugging.</summary>
     public IReadOnlyList<PhysicsBody> Bodies => _bodiesOrdered;
 
+    /// <summary>Read-only access to the shapes created for each spawned body (parallel to Bodies).</summary>
+    public IReadOnlyList<PhysicsShape> Shapes => _shapesOrdered;
+
     public void ClearRecords()
     {
         _bodiesOrdered.Clear();
         _bodyTypesOrdered.Clear();
+        _shapesOrdered.Clear();
+    }
+
+    /// <summary>
+    /// Applies the exposed particle properties to every already-spawned body/shape.
+    /// NOTE: radius is geometry — it only affects newly spawned bodies.
+    /// Uses reflection for body/shape setters so unknown API names fail softly (warn) instead of breaking compile.
+    /// </summary>
+    public void ApplyParticlePropertiesToSpawnedBodies()
+    {
+        for (int i = 0; i < _bodiesOrdered.Count; i++)
+        {
+            bool hasShape = i < _shapesOrdered.Count;
+            ApplyParticlePropertiesToIndexedBody(i, hasShape);
+        }
+    }
+
+    /// <summary>
+    /// Sets every already-spawned body to <see cref="defaultParticleType"/>.
+    /// </summary>
+    public void ApplyParticleTypeToAllBodies()
+    {
+        for (int i = 0; i < _bodyTypesOrdered.Count; i++)
+            _bodyTypesOrdered[i] = defaultParticleType;
+    }
+
+    void ApplyParticlePropertiesToIndexedBody(int index, bool hasShape)
+    {
+        PhysicsBody body = _bodiesOrdered[index];
+        if (body == null) return;
+
+        TrySetMember(body, "linearDamping", particleLinearDamping);
+        TrySetMember(body, "gravityScale", particleGravityScale);
+        TrySetMember(body, "mass", particleMass);
+
+        // constraints is an enum on PhysicsBody; set via Enum parse-safe path.
+        object rotationFlag = GetEnumValue(typeof(PhysicsBody.BodyConstraints), "Rotation");
+        object noneFlag = GetEnumValue(typeof(PhysicsBody.BodyConstraints), "None");
+        if (rotationFlag != null && noneFlag != null)
+            TrySetMember(body, "constraints", particleFreezeRotation ? rotationFlag : noneFlag);
+
+        if (!hasShape) return;
+
+        // PhysicsShape is a struct handle — must box, mutate, then write back.
+        object shapeBoxed = _shapesOrdered[index];
+        TrySetMember(shapeBoxed, "density", particleDensity);
+        TrySetMember(shapeBoxed, "triggerEvents", particleTriggerEvents);
+
+        // surfaceMaterial is a nested struct: read, mutate, write back.
+        object surfMat = GetMemberValue(shapeBoxed, "surfaceMaterial");
+        if (surfMat != null)
+        {
+            TrySetMember(surfMat, "friction", particleFriction);
+            TrySetMember(surfMat, "bounciness", particleBounciness);
+            TrySetMember(surfMat, "customColor", particleColor);
+            TrySetMember(shapeBoxed, "surfaceMaterial", surfMat);
+        }
+
+        _shapesOrdered[index] = (PhysicsShape)shapeBoxed;
+    }
+
+    static void TrySetMember(object target, string memberName, object value)
+    {
+        if (target == null || string.IsNullOrEmpty(memberName)) return;
+        System.Type t = target.GetType();
+
+        // Property first (covers most Unity setters).
+        PropertyInfo prop = t.GetProperty(memberName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (prop != null && prop.CanWrite)
+        {
+            try
+            {
+                object converted = ConvertValue(value, prop.PropertyType);
+                prop.SetValue(target, converted);
+                return;
+            }
+            catch { /* fall through to field, then warn */ }
+        }
+
+        FieldInfo field = t.GetField(memberName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (field != null)
+        {
+            try
+            {
+                object converted = ConvertValue(value, field.FieldType);
+                field.SetValue(target, converted);
+                return;
+            }
+            catch { /* warn below */ }
+        }
+
+        Debug.LogWarning($"[BenchMark] No writable property/field '{memberName}' on {t.Name}; skipped.");
+    }
+
+    static object GetMemberValue(object target, string memberName)
+    {
+        if (target == null) return null;
+        System.Type t = target.GetType();
+        PropertyInfo prop = t.GetProperty(memberName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (prop != null && prop.CanRead)
+        {
+            try { return prop.GetValue(target); } catch { return null; }
+        }
+        FieldInfo field = t.GetField(memberName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (field != null)
+        {
+            try { return field.GetValue(target); } catch { return null; }
+        }
+        Debug.LogWarning($"[BenchMark] No readable property/field '{memberName}' on {t.Name}; skipped.");
+        return null;
+    }
+
+    static object GetEnumValue(System.Type enumType, string name)
+    {
+        try
+        {
+            if (enumType != null && enumType.IsEnum)
+                return System.Enum.Parse(enumType, name);
+        }
+        catch { }
+        return null;
+    }
+
+    static object ConvertValue(object value, System.Type targetType)
+    {
+        if (value == null) return null;
+        if (targetType.IsInstanceOfType(value)) return value;
+        if (targetType.IsEnum && value is string s) return System.Enum.Parse(targetType, s);
+        return System.Convert.ChangeType(value, targetType);
     }
 
     void Spawn()
@@ -128,28 +319,37 @@ public class BenchMark : MonoBehaviour
                     type = PhysicsBody.BodyType.Dynamic,
                     position = worldPos,
                     rotation = PhysicsRotate.down,
-                    linearDamping = 0.2f,
-                    gravityScale = 1f,
+                    linearDamping = particleLinearDamping,
+                    gravityScale = particleGravityScale,
+                    constraints = particleFreezeRotation
+                        ? PhysicsBody.BodyConstraints.Rotation
+                        : PhysicsBody.BodyConstraints.None,
+                    massConfiguration = new PhysicsBody.MassConfiguration
+                    {
+                        mass = particleMass,
+
+                    }
                     
                 }
             );
             PhysicsShapeDefinition shapeDef = new PhysicsShapeDefinition
                 {
-                    triggerEvents = true,
-                    density = 1f, //weight
+                    triggerEvents = particleTriggerEvents,
+                    density = particleDensity, //weight
 
                     surfaceMaterial = new PhysicsShape.SurfaceMaterial
                     {
-                        customColor = Color.red,
-                        friction = 0.2f,
-                        bounciness = 0.2f,
+                        customColor = particleColor,
+                        friction = particleFriction,
+                        bounciness = particleBounciness,
                     }
                 };
             PhysicsShape createdShape = body.CreateShape(
-                new CircleGeometry { center = Vector2.zero, radius = 0.10f },
+                new CircleGeometry { center = Vector2.zero, radius = particleRadius },
                 shapeDef
             );
             _bodiesOrdered.Add(body);
+            _shapesOrdered.Add(createdShape);
             _bodyTypesOrdered.Add(defaultParticleType);
             batchCounter++;
             if (batchCounter >= perBatch && i < spawnCount - 1)
