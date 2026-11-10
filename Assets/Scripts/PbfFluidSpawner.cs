@@ -4,8 +4,10 @@ using Unity.U2D.Physics;
 
 /// <summary>
 /// Code-only spawner (no prefab): creates Dynamic bodies via
-/// PhysicsBody.Create(world, def) + body.CreateShape(CircleGeometry.Create(r), shapeDef).
+/// PhysicsWorld.CreateBody(def) + body.CreateShape(CircleGeometry, shapeDef).
 /// Zero Instantiate, zero GetComponent. Registers each body with PbfFluidLite.
+/// The ENGINE keeps owning gravity, damping, mass and collisions for these bodies;
+/// PbfFluidLite only adds pressure + viscosity as forces.
 /// </summary>
 [DefaultExecutionOrder(-5)]
 public class PbfFluidSpawner : MonoBehaviour
@@ -14,13 +16,18 @@ public class PbfFluidSpawner : MonoBehaviour
     [Tooltip("Sim to register with. Auto-found if null.")]
     public PbfFluidLite sim;
     [Header("Body (code-only, no GameObjects)")]
-    public float particleRadius = 0.12f;
+    [Tooltip("Keep diameter (2r) at about 80-90% of Spacing. If the circles already touch at rest, the engine's " +
+             "contacts do all the work and the fluid pressure never gets a chance to act.")]
+    public float particleRadius = 0.1f;
+    [Tooltip("If > 0 the body mass is forced to this value. If 0 the engine computes it from Density x area.")]
     public float particleMass = 0.5f;
+    [Tooltip("Only used when Particle Mass is 0.")]
     public float particleDensity = 1f;
     public float particleFriction = 0f;
     public float particleBounciness = 0f;
     public Color particleColor = Color.cyan;
     public float particleLinearDamping = 0.05f;
+    [Tooltip("The body's own gravity scale. The sim multiplies the fluid type's gravityMultiplier into it.")]
     public float particleGravityScale = 1f;
     public bool particleFreezeRotation = true;
 
@@ -39,6 +46,8 @@ public class PbfFluidSpawner : MonoBehaviour
     [Header("Behaviour")]
     public bool spawnOnStart = true;
     public bool clearBeforeSpawn = true;
+    [Tooltip("Tell the sim the spawn spacing/mass so its rest density always matches what was actually spawned.")]
+    public bool calibrateSimOnSpawn = true;
 
     [Header("Debug")]
     public bool showLogs = true;
@@ -51,14 +60,27 @@ public class PbfFluidSpawner : MonoBehaviour
     {
         if (spawnOnStart) Spawn();
     }
+
+    // Bodies created in code have no scene owner: without this they would outlive the component
+    // (e.g. across a scene reload) as invisible-to-the-sim ghosts that still cost physics time.
+    void OnDestroy()
+    {
+        Despawn(false);
+    }
+
     [ContextMenu("Spawn")]
     public void Spawn()
     {
         if (sim == null) sim = FindFirstObjectByType<PbfFluidLite>();
         if (sim == null) { Debug.LogWarning("[Spawner] PbfFluidLite not found."); return; }
         if (clearBeforeSpawn) Despawn(false);
+
         PhysicsWorld world = PhysicsWorld.defaultWorld;
         float r = Mathf.Max(0.02f, particleRadius);
+        if (showLogs && 2f * r > 0.9f * spacing)
+            Debug.LogWarning($"[Spawner] diameter {2f * r:F2} is > 90% of spacing {spacing:F2}: circles touch at rest, so engine contacts " +
+                             "will dominate and the fluid pressure has almost no room to act. Try radius <= " + (0.45f * spacing).ToString("F2") + ".");
+
         var shapeDef = new PhysicsShapeDefinition
         {
             triggerEvents = true, // Finger.cs GetTriggerVisitors() sees fluid
@@ -70,7 +92,9 @@ public class PbfFluidSpawner : MonoBehaviour
                 bounciness = Mathf.Max(0f, particleBounciness),
             }
         };
+
         int n = 0;
+        float lastMass = particleMass;
         for (int row = 0; row < rows; row++)
             for (int col = 0; col < cols; col++)
             {
@@ -96,14 +120,16 @@ public class PbfFluidSpawner : MonoBehaviour
                 );
                 if (!shape.isValid) { body.Destroy(0); continue; }
                 if (particleMass > 1e-6f) body.mass = particleMass;
+                lastMass = body.mass;
                 sim.AddParticle(body, spawnTypeId); // PbfFluidLite: type selects gravityMultiplier/stiffness/viscosity
                 spawned.Add(body);
                 n++;
             }
-        // Engine-created bodies have no scene PhysicsPose owner; SyncFromList()
-        // now preserves code-only bodies, so no extra sync needed here.
-        if (showLogs) Debug.Log($"[Spawner] spawned {n} code-only bodies into PbfFluidLite (spacing {spacing}, jitter {jitter}).");
+
+        if (n > 0 && calibrateSimOnSpawn) sim.ConfigureReference(spacing, lastMass);
+        if (showLogs) Debug.Log($"[Spawner] spawned {n} code-only bodies into PbfFluidLite (spacing {spacing}, jitter {jitter}, body mass {lastMass:F3}).");
     }
+
     [ContextMenu("Despawn")]
     public void Despawn() => Despawn(true);
     public void Despawn(bool sync)
@@ -115,9 +141,8 @@ public class PbfFluidSpawner : MonoBehaviour
             try { b.Destroy(0); } catch { }
         }
         spawned.Clear();
-        // Bodies removed directly; SyncFromList() now preserves code-only
-        // bodies, so no extra sync is required here.
     }
+
     void OnDrawGizmos()
     {
         if (!showSpawnGizmo) return;
