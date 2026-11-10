@@ -68,30 +68,171 @@ public class PbfFluidSpawner : MonoBehaviour
         Despawn(false);
     }
 
+    [ContextMenu("SpawnOne")]
+    /// <summary>
+    /// Spawns a single particle. All properties are optional (null = inspector default).
+    /// Returns the spawned body (check body.isValid). Also usable from other scripts.
+    /// </summary>
+    public PhysicsBody SpawnOne(
+        Vector2? position = null,
+        float? radius = null,
+        float? mass = null,
+        float? density = null,
+        float? friction = null,
+        float? bounciness = null,
+        Color? color = null,
+        float? linearDamping = null,
+        float? gravityScale = null,
+        bool? freezeRotation = null,
+        int? typeId = null)
+    {
+        if (!EnsureSim()) return default;
+        var bodyDef = new PhysicsBodyDefinition
+        {
+            type = PhysicsBody.BodyType.Dynamic,
+            position = position ?? spawnOrigin,
+            rotation = PhysicsRotate.down,
+            linearDamping = linearDamping ?? particleLinearDamping,
+            gravityScale = gravityScale ?? particleGravityScale,
+            constraints = (freezeRotation ?? particleFreezeRotation)
+                ? PhysicsBody.BodyConstraints.Rotation
+                : PhysicsBody.BodyConstraints.None,
+        };
+        var shapeDef = new PhysicsShapeDefinition
+        {
+            triggerEvents = true, // Finger.cs GetTriggerVisitors() sees fluid
+            density = Mathf.Max(0.01f, density ?? particleDensity),
+            surfaceMaterial = new PhysicsShape.SurfaceMaterial
+            {
+                customColor = color ?? particleColor,
+                friction = Mathf.Max(0f, friction ?? particleFriction),
+                bounciness = Mathf.Max(0f, bounciness ?? particleBounciness),
+            }
+        };
+        return SpawnOneInternal(
+            PhysicsWorld.defaultWorld,
+            bodyDef,
+            shapeDef,
+            Mathf.Max(0.02f, radius ?? particleRadius),
+            mass ?? particleMass,
+            typeId ?? spawnTypeId);
+    }
+
+    bool EnsureSim()
+    {
+        if (sim == null) sim = FindFirstObjectByType<PbfFluidLite>();
+        if (sim == null)
+        {
+            if (showLogs) Debug.LogWarning("[Spawner] PbfFluidLite not found.");
+            return false;
+        }
+        return true;
+    }
+
+    PhysicsBody SpawnOneInternal(
+        PhysicsWorld world,
+        PhysicsBodyDefinition bodyDef,
+        PhysicsShapeDefinition shapeDef,
+        float radius,
+        float mass,
+        int typeId)
+    {
+        PhysicsBody body = world.CreateBody(bodyDef);
+        if (!body.isValid) return body;
+        PhysicsShape shape = body.CreateShape(
+            new CircleGeometry { center = Vector2.zero, radius = radius },
+            shapeDef
+        );
+        if (!shape.isValid) { try { body.Destroy(0); } catch { } return default; }
+        if (mass > 1e-6f) body.mass = mass;
+        sim.AddParticle(body, typeId);
+        spawned.Add(body);
+        return body;
+    }
+
+    /// <summary>Spawn one particle from explicit engine defs. Optional radius/mass/typeId fall back to inspector defaults.</summary>
+    public PhysicsBody SpawnOne(
+        PhysicsBodyDefinition bodyDef,
+        PhysicsShapeDefinition shapeDef,
+        float? radius = null,
+        float? mass = null,
+        int? typeId = null)
+    {
+        if (!EnsureSim()) return default;
+        return SpawnOneInternal(
+            PhysicsWorld.defaultWorld, bodyDef, shapeDef,
+            Mathf.Max(0.02f, radius ?? particleRadius),
+            mass ?? particleMass, typeId ?? spawnTypeId);
+    }
+
+    /// <summary>Spawn one particle from an explicit body def + default shape (optional shape props fall back to inspector).</summary>
+    public PhysicsBody SpawnOne(
+        PhysicsBodyDefinition bodyDef,
+        float? radius = null,
+        float? mass = null,
+        float? density = null,
+        float? friction = null,
+        float? bounciness = null,
+        Color? color = null,
+        int? typeId = null)
+    {
+        if (!EnsureSim()) return default;
+        var shapeDef = new PhysicsShapeDefinition
+        {
+            triggerEvents = true,
+            density = Mathf.Max(0.01f, density ?? particleDensity),
+            surfaceMaterial = new PhysicsShape.SurfaceMaterial
+            {
+                customColor = color ?? particleColor,
+                friction = Mathf.Max(0f, friction ?? particleFriction),
+                bounciness = Mathf.Max(0f, bounciness ?? particleBounciness),
+            }
+        };
+        return SpawnOneInternal(
+            PhysicsWorld.defaultWorld, bodyDef, shapeDef,
+            Mathf.Max(0.02f, radius ?? particleRadius),
+            mass ?? particleMass, typeId ?? spawnTypeId);
+    }
+
+    /// <summary>Spawn one particle from an explicit shape def + default body (optional body props fall back to inspector).</summary>
+    public PhysicsBody SpawnOne(
+        PhysicsShapeDefinition shapeDef,
+        Vector2? position = null,
+        float? radius = null,
+        float? mass = null,
+        float? linearDamping = null,
+        float? gravityScale = null,
+        bool? freezeRotation = null,
+        int? typeId = null)
+    {
+        if (!EnsureSim()) return default;
+        var bodyDef = new PhysicsBodyDefinition
+        {
+            type = PhysicsBody.BodyType.Dynamic,
+            position = position ?? spawnOrigin,
+            rotation = PhysicsRotate.down,
+            linearDamping = linearDamping ?? particleLinearDamping,
+            gravityScale = gravityScale ?? particleGravityScale,
+            constraints = (freezeRotation ?? particleFreezeRotation)
+                ? PhysicsBody.BodyConstraints.Rotation
+                : PhysicsBody.BodyConstraints.None,
+        };
+        return SpawnOneInternal(
+            PhysicsWorld.defaultWorld, bodyDef, shapeDef,
+            Mathf.Max(0.02f, radius ?? particleRadius),
+            mass ?? particleMass, typeId ?? spawnTypeId);
+    }
+
     [ContextMenu("Spawn")]
     public void Spawn()
     {
-        if (sim == null) sim = FindFirstObjectByType<PbfFluidLite>();
-        if (sim == null) { Debug.LogWarning("[Spawner] PbfFluidLite not found."); return; }
+        if (!EnsureSim()) return;
         if (clearBeforeSpawn) Despawn(false);
 
-        PhysicsWorld world = PhysicsWorld.defaultWorld;
         float r = Mathf.Max(0.02f, particleRadius);
         if (showLogs && 2f * r > 0.9f * spacing)
             Debug.LogWarning($"[Spawner] diameter {2f * r:F2} is > 90% of spacing {spacing:F2}: circles touch at rest, so engine contacts " +
                              "will dominate and the fluid pressure has almost no room to act. Try radius <= " + (0.45f * spacing).ToString("F2") + ".");
-
-        var shapeDef = new PhysicsShapeDefinition
-        {
-            triggerEvents = true, // Finger.cs GetTriggerVisitors() sees fluid
-            density = Mathf.Max(0.01f, particleDensity),
-            surfaceMaterial = new PhysicsShape.SurfaceMaterial
-            {
-                customColor = particleColor,
-                friction = Mathf.Max(0f, particleFriction),
-                bounciness = Mathf.Max(0f, particleBounciness),
-            }
-        };
 
         int n = 0;
         float lastMass = particleMass;
@@ -100,29 +241,9 @@ public class PbfFluidSpawner : MonoBehaviour
             {
                 Vector2 p = spawnOrigin + new Vector2(col * spacing, row * spacing);
                 if (jitter > 0f) p += new Vector2(Random.Range(-jitter, jitter), Random.Range(-jitter, jitter));
-                PhysicsBody body = world.CreateBody(
-                    new PhysicsBodyDefinition
-                    {
-                        type = PhysicsBody.BodyType.Dynamic,
-                        position = p,
-                        rotation = PhysicsRotate.down,
-                        linearDamping = particleLinearDamping,
-                        gravityScale = particleGravityScale,
-                        constraints = particleFreezeRotation
-                            ? PhysicsBody.BodyConstraints.Rotation
-                            : PhysicsBody.BodyConstraints.None,
-                    }
-                );
+                PhysicsBody body = SpawnOne(p);
                 if (!body.isValid) continue;
-                PhysicsShape shape = body.CreateShape(
-                    new CircleGeometry { center = Vector2.zero, radius = r },
-                    shapeDef
-                );
-                if (!shape.isValid) { body.Destroy(0); continue; }
-                if (particleMass > 1e-6f) body.mass = particleMass;
                 lastMass = body.mass;
-                sim.AddParticle(body, spawnTypeId); // PbfFluidLite: type selects gravityMultiplier/stiffness/viscosity
-                spawned.Add(body);
                 n++;
             }
 
