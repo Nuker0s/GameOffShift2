@@ -1030,23 +1030,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db4f1f93d9a4ab240a21016ca3757641, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidLite
-  gridOrigin: {x: -12.3, y: -30.77}
-  gridSize: {x: 22.8, y: 44.3}
   cellSize: 0.37
   smoothingRadius: 0.5
   iterations: 3
   enablePBF: 1
   runInFixedUpdate: 1
   maxSpeed: 20
-  maxCorrection: 0.3
+  maxCorrection: 0.05
+  relaxation: 1
+  viscosityScale: 0.5
   types:
   - name: Water
     restDensity: 15
+    restDensityScale: 1
     stiffness: 0.5
     viscosity: 0.2
     gravityMultiplier: 1
   - name: Oil
     restDensity: 12
+    restDensityScale: 0.75
     stiffness: 0.3
     viscosity: 0.6
     gravityMultiplier: 1
@@ -1054,12 +1056,16 @@ MonoBehaviour:
   manualPoses: []
   autoSyncSource: []
   autoSyncEveryFixedUpdate: 0
+  autoCalibrate: 1
   referenceSpacing: 0.35
   referenceMass: 1
   showParticlesViaPhysicsDraw: 1
   showGridGizmo: 1
   drawGridWhenUnselected: 1
   showLogs: 0
+  diagAvgDensityRatio: 0
+  diagCompressed: 0
+  diagStepMs: 0
 --- !u!4 &936009784
 Transform:
   m_ObjectHideFlags: 0
@@ -1105,6 +1111,7 @@ MonoBehaviour:
   spawnTypeId: 0
   spawnOnStart: 1
   clearBeforeSpawn: 1
+  calibrateSimOnSpawn: 1
   showLogs: 1
   showSpawnGizmo: 1
 --- !u!1 &1005268990
