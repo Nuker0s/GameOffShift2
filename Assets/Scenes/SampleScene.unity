@@ -416,7 +416,7 @@ MonoBehaviour:
   maxBounds: {x: 50, y: 50, z: 50}
   sphere: {fileID: 1005268992}
   fingerMoveMultiplier: 10
-  forceMultiplier: 1
+  forceMultiplier: 5
 --- !u!114 &519420035
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1032,7 +1032,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidLite
   cellSize: 0.37
   smoothingRadius: 0.5
-  iterations: 3
+  iterations: 1
   enablePBF: 1
   runInFixedUpdate: 1
   maxSpeed: 20
@@ -1057,7 +1057,7 @@ MonoBehaviour:
   autoSyncSource: []
   autoSyncEveryFixedUpdate: 0
   autoCalibrate: 1
-  referenceSpacing: 0.35
+  referenceSpacing: 3
   referenceMass: 1
   showParticlesViaPhysicsDraw: 1
   showGridGizmo: 1
@@ -1095,7 +1095,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidSpawner
   sim: {fileID: 0}
   particleRadius: 0.12
-  particleMass: 0.001
+  particleMass: 0.2
   particleDensity: 1
   particleFriction: 0.1
   particleBounciness: 0
@@ -1103,7 +1103,7 @@ MonoBehaviour:
   particleLinearDamping: 0.1
   particleGravityScale: 1
   particleFreezeRotation: 1
-  spawnOrigin: {x: -4.62, y: 0}
+  spawnOrigin: {x: -8.51, y: -7.76}
   rows: 32
   cols: 32
   spacing: 0.35
