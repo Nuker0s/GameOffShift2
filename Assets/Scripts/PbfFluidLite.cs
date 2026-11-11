@@ -122,6 +122,30 @@ public class PbfFluidLite : MonoBehaviour
     [Tooltip("Cost of the whole fluid pass on the main thread, milliseconds.")]
     public float diagStepMs;
 
+    [Header("Metaball Rendering (mirrors old BenchMark path)")]
+    [Tooltip("Renderer of the plane/quad that draws the metaballs (uses world-space XY).")]
+    public Renderer metaballPlaneRenderer;
+    [Tooltip("Optional. If set, this material is updated. Otherwise the renderer's material instance is used.")]
+    public Material metaballMaterialOverride;
+    [Tooltip("Starting ComputeBuffer capacity. Grows automatically as needed.")]
+    public int metaballBufferInitialCapacity = 512;
+    [Tooltip("Metaball field radius. Must roughly match _Radius in the shader.")]
+    public float metaballRadius = 0.4f;
+    [Tooltip("Field threshold for surface. Must roughly match _Threshold in the shader.")]
+    public float metaballThreshold = 1.0f;
+    [Tooltip("If true, material float props are synced from here every frame.")]
+    public bool syncMaterialParams = true;
+    [Tooltip("If true and no (visible) bodies exist, renders one fake metaball at world origin.")]
+    public bool debugTestBallAtOrigin = true;
+    public float debugTestBallType = 0f;
+    [Tooltip("Null = Camera.main. Only particles in grid cells this camera can see are uploaded.")]
+    public Camera metaballCamera;
+    [Tooltip("ON: upload only particles in grid cells visible to metaballCamera. OFF: upload all.")]
+    public bool metaballCullByGrid = true;
+    [Tooltip("World padding around the camera view. < 0 = auto (4x metaballRadius, matches shader falloff).")]
+    public float metaballViewPadding = -1f;
+    public bool showMetaballLogs = false;
+
     public int ParticleCount => count;
 
     // ------------------------------------------------------------------ registry
@@ -152,6 +176,15 @@ public class PbfFluidLite : MonoBehaviour
     int stepCounter;
     bool destroyed;   // set in OnDestroy: other scripts may still call us during scene teardown
     float gridMinX, gridMinY, gridMaxX, gridMaxY;
+
+    // ------------------------------------------------------------------ metaballs (BenchMark parity)
+    private Vector3[] _metaballData;
+    private ComputeBuffer _metaballBuffer;
+    private Camera _cachedMetaballCam;
+    private static readonly int MetaballsId = Shader.PropertyToID("_Metaballs");
+    private static readonly int MetaballCountId = Shader.PropertyToID("_MetaballCount");
+    private static readonly int RadiusId = Shader.PropertyToID("_Radius");
+    private static readonly int ThresholdId = Shader.PropertyToID("_Threshold");
 
     static bool Finite(float f) { return !(float.IsNaN(f) || float.IsInfinity(f)); }
     static bool Finite(Vector2 v) { return Finite(v.x) && Finite(v.y); }
@@ -281,6 +314,12 @@ public class PbfFluidLite : MonoBehaviour
 
     void OnDisable() { RestoreGravityScales(); }
 
+    void LateUpdate()
+    {
+        if (destroyed) return;
+        PushMetaballPositionsToShader();
+    }
+
     void OnDestroy()
     {
         // During scene teardown other scripts (e.g. the spawner's OnDestroy) can still call RemoveParticle, in either
@@ -290,6 +329,7 @@ public class PbfFluidLite : MonoBehaviour
         simPoses.Clear();
         for (int i = 0; i < count; i++) bodies[i] = default;
         count = 0; massSum = 0f;
+        ReleaseMetaballBuffer();
         DisposeNative();
     }
 
@@ -667,6 +707,214 @@ public class PbfFluidLite : MonoBehaviour
         if (types == null || types.Count == 0) types = new List<FluidType>() { new FluidType() };
         foreach (var ft in types) if (ft != null) ft.restDensity = rho0 * ft.restDensityScale;
         return rho0;
+    }
+
+    // ================================================================== metaballs (BenchMark parity + grid-culled upload)
+    Material ResolveMetaballMaterial()
+    {
+        if (metaballMaterialOverride != null)
+            return metaballMaterialOverride;
+        if (metaballPlaneRenderer != null)
+        {
+            // .material (instance) so SetBuffer/SetInt don't leak into other
+            // objects and aren't stomped by SRP batcher state.
+            return metaballPlaneRenderer.material;
+        }
+        return null;
+    }
+
+    void EnsureMetaballCapacity(int needed)
+    {
+        // Always keep >= 1 so we can bind a dummy buffer even when nothing
+        // is visible (unbound SRV = pink + "requires a buffer" in builds).
+        needed = Mathf.Max(1, needed);
+        if (_metaballBuffer != null && _metaballBuffer.count >= needed) return;
+
+        int newCap = Mathf.Max(Mathf.Max(1, metaballBufferInitialCapacity), needed);
+        if (_metaballBuffer != null)
+        {
+            newCap = Mathf.Max(newCap, _metaballBuffer.count * 2);
+            ReleaseMetaballBuffer();
+        }
+
+        // float3 = 3 floats = 12 bytes. xy = world XY, z = type id.
+        _metaballBuffer = new ComputeBuffer(newCap, sizeof(float) * 3);
+        _metaballData = new Vector3[newCap];
+    }
+
+    void ReleaseMetaballBuffer()
+    {
+        if (_metaballBuffer != null)
+        {
+            _metaballBuffer.Release();
+            _metaballBuffer = null;
+        }
+        _metaballData = null;
+    }
+
+    Camera ResolveMetaballCamera()
+    {
+        if (metaballCamera != null) return metaballCamera;
+        if (_cachedMetaballCam != null) return _cachedMetaballCam;
+        _cachedMetaballCam = Camera.main;
+        return _cachedMetaballCam;
+    }
+
+    /// <summary>
+    /// World-space XY rect this camera can see on the particle (z=0) plane,
+    /// expanded by padding so metaball falloff at the screen edge isn't cut.
+    /// </summary>
+    bool TryGetMetaballViewBounds(Camera cam, float padding, out Vector2 vMin, out Vector2 vMax)
+    {
+        vMin = default; vMax = default;
+        if (cam == null) return false;
+        float pad = padding >= 0f ? padding : metaballRadius * 4f; // matches shader maxDist = 4x radius
+        float cx = cam.transform.position.x;
+        float cy = cam.transform.position.y;
+        float halfH, halfW;
+        if (cam.orthographic)
+        {
+            halfH = Mathf.Max(0.01f, cam.orthographicSize);
+            halfW = halfH * Mathf.Max(0.01f, cam.aspect);
+        }
+        else
+        {
+            float dist = Mathf.Max(0.01f, Mathf.Abs(cam.transform.position.z)); // particle plane z ~= 0
+            halfH = dist * Mathf.Tan(Mathf.Max(1f, cam.fieldOfView) * 0.5f * Mathf.Deg2Rad);
+            halfW = halfH * Mathf.Max(0.01f, cam.aspect);
+        }
+        if (!Finite(halfW) || !Finite(halfH)) return false;
+        vMin = new Vector2(cx - halfW - pad, cy - halfH - pad);
+        vMax = new Vector2(cx + halfW + pad, cy + halfH + pad);
+        return true;
+    }
+
+    /// <summary>
+    /// Copies xy = body world position, z = particle type into the shader's
+    /// StructuredBuffer. Unlike BenchMark (everything), this uploads ONLY
+    /// particles in grid cells the camera can see. Buffer is ALWAYS bound
+    /// (even at count 0) so D3D12 never hits "requires a buffer (SRV)
+    /// _Metaballs but none provided" pink fallback.
+    /// </summary>
+    void PushMetaballPositionsToShader()
+    {
+        Material mat = ResolveMetaballMaterial();
+        if (mat == null)
+        {
+            if (showMetaballLogs) Debug.LogWarning("[PbfFluidLite/Metaballs] No material: assign Metaball Plane Renderer or Material Override.");
+            return;
+        }
+
+        // Buffer must exist before ANY SetInt/return path below.
+        EnsureMetaballCapacity(1);
+        if (_metaballBuffer == null || _metaballData == null) return;
+
+        int written = 0;
+        bool cull = metaballCullByGrid;
+        Camera cam = cull ? ResolveMetaballCamera() : null;
+        Vector2 vMin = default, vMax = default;
+        bool hasView = cull && cam != null && TryGetMetaballViewBounds(cam, metaballViewPadding, out vMin, out vMax);
+
+        if (!cull || !hasView)
+        {
+            // No culling (or no camera/view): upload everything, like BenchMark.
+            for (int i = 0; i < count; i++)
+            {
+                PhysicsBody b = bodies[i];
+                if (!b.isValid) continue;
+                Vector2 p = b.position;
+                if (!Finite(p)) continue;
+                EnsureMetaballCapacity(written + 1);
+                _metaballData[written].x = p.x;
+                _metaballData[written].y = p.y;
+                _metaballData[written].z = nType.IsCreated && i < nType.Length ? nType[i] : ClampType(defaultType);
+                written++;
+            }
+            if (showMetaballLogs && Time.frameCount % 60 == 0)
+                Debug.Log($"[PbfFluidLite/Metaballs] culling OFF/fallback, uploaded {written}/{count}.");
+            FinishMetaballPush(mat, written);
+            return;
+        }
+
+        PushMetaballPositionsCulled(vMin, vMax, ref written);
+        FinishMetaballPush(mat, written);
+    }
+
+    /// <summary>Grid-capped upload: only cells overlapping the camera rect.</summary>
+    void PushMetaballPositionsCulled(Vector2 vMin, Vector2 vMax, ref int written)
+    {
+        float cell = EffectiveSmoothing; // cell size == smoothing radius
+        int cols = Mathf.Max(1, gridColumns), rows = Mathf.Max(1, gridRows);
+
+        int col0 = Mathf.FloorToInt((vMin.x - gridOrigin.x) / cell);
+        int col1 = Mathf.FloorToInt((vMax.x - gridOrigin.x) / cell);
+        int row0 = Mathf.FloorToInt((vMin.y - gridOrigin.y) / cell);
+        int row1 = Mathf.FloorToInt((vMax.y - gridOrigin.y) / cell);
+        col0 = Mathf.Clamp(col0, 0, cols - 1);
+        col1 = Mathf.Clamp(col1, 0, cols - 1);
+        row0 = Mathf.Clamp(row0, 0, rows - 1);
+        row1 = Mathf.Clamp(row1, 0, rows - 1);
+
+        if (col0 <= col1 && row0 <= row1)
+        {
+            float invCell = 1f / cell;
+            for (int i = 0; i < count; i++)
+            {
+                PhysicsBody b = bodies[i];
+                if (!b.isValid) continue;
+                Vector2 p = b.position;
+                if (!Finite(p)) continue;
+
+                // Fast path: outside padded view => can't contribute
+                // (shader falloff is already inside the padding).
+                if (p.x < vMin.x || p.x > vMax.x || p.y < vMin.y || p.y > vMax.y)
+                    continue;
+
+                // Grid-cell gate: the actual culling. Clamp border pile-ups
+                // into edge cells instead of dropping them.
+                int cx = Mathf.FloorToInt((p.x - gridOrigin.x) * invCell);
+                int cy = Mathf.FloorToInt((p.y - gridOrigin.y) * invCell);
+                if (cx < 0) cx = 0; else if (cx >= cols) cx = cols - 1;
+                if (cy < 0) cy = 0; else if (cy >= rows) cy = rows - 1;
+                if (cx < col0 || cx > col1 || cy < row0 || cy > row1)
+                    continue;
+
+                EnsureMetaballCapacity(written + 1);
+                _metaballData[written].x = p.x;
+                _metaballData[written].y = p.y;
+                _metaballData[written].z = nType.IsCreated && i < nType.Length ? nType[i] : ClampType(defaultType);
+                written++;
+            }
+        }
+
+        if (showMetaballLogs && Time.frameCount % 60 == 0)
+            Debug.Log($"[PbfFluidLite/Metaballs] culled {written}/{count} " +
+                      $"cells x[{col0},{col1}] y[{row0},{row1}] view=({vMin},{vMax})");
+    }
+
+    /// <summary>
+    /// Commits the CPU mirror to the GPU and binds it. ALWAYS binds, even at
+    /// count 0 — an unbound StructuredBuffer is the D3D12 pink cause.
+    /// </summary>
+    void FinishMetaballPush(Material mat, int written)
+    {
+        if (written == 0 && debugTestBallAtOrigin)
+        {
+            EnsureMetaballCapacity(1);
+            _metaballData[0] = new Vector3(0f, 0f, debugTestBallType);
+            written = 1;
+        }
+
+        if (written > 0)
+            _metaballBuffer.SetData(_metaballData, 0, 0, written);
+        mat.SetBuffer(MetaballsId, _metaballBuffer);
+        mat.SetInt(MetaballCountId, written);
+
+        if (syncMaterialParams)
+        {
+            mat.SetFloat(RadiusId, metaballRadius);
+            mat.SetFloat(ThresholdId, metaballThreshold);
+        }
     }
 
     // ================================================================== gizmos
