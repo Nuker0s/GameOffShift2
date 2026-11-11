@@ -671,7 +671,7 @@ public class PbfFluidLite : MonoBehaviour
         try
         {
             PhysicsWorld w = PhysicsWorld.defaultWorld;
-            w.drawOptions = showParticlesViaPhysicsDraw ? PhysicsWorld.DrawOptions.AllShapes : PhysicsWorld.DrawOptions.Off;
+            //w.drawOptions = PhysicsWorld.DrawOptions.AllShapes; // : PhysicsWorld.DrawOptions.Off; showParticlesViaPhysicsDraw ? 
         }
         catch (System.Exception ex) { if (showLogs) Debug.LogWarning("[PbfFluidLite] drawOptions: " + ex.Message); }
     }

@@ -107,7 +107,7 @@ MonoBehaviour:
     m_ContactSpeed: 3
     m_ContactRecycleDistance: 0.049999997
     m_MaximumLinearSpeed: 400
-    m_DrawOptions: 4106
+    m_DrawOptions: -1
     m_DrawFillOptions: 7
     m_DrawContactType: 4
     m_DrawFilter: 0

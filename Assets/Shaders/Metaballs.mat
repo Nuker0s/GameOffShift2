@@ -26,14 +26,14 @@ Material:
     m_Ints: []
     m_Floats:
     - _BackgroundAlpha: 0
-    - _EdgeWidth: 0.202
+    - _EdgeWidth: 0
     - _Radius: 0.4
-    - _Smoothness: 1.45
+    - _Smoothness: 1
     - _Threshold: 1
     m_Colors:
     - _BackgroundColor: {r: 0, g: 0, b: 0, a: 0}
-    - _EdgeColor: {r: 1, g: 1, b: 1, a: 1}
-    - _TypeColor0: {r: 0.19999996, g: 0.6, b: 1, a: 1}
+    - _EdgeColor: {r: 1, g: 1, b: 1, a: 0}
+    - _TypeColor0: {r: 0, g: 0.695, b: 0.5418163, a: 1}
     - _TypeColor1: {r: 0, g: 0.9622642, b: 0.74726444, a: 1}
     - _TypeColor2: {r: 0, g: 0, b: 0, a: 1}
     - _TypeColor3: {r: 1, g: 0.85, b: 0.24999997, a: 1}

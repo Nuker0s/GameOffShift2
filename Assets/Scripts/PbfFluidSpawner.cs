@@ -209,7 +209,9 @@ public class PbfFluidSpawner : MonoBehaviour
         float mass,
         int typeId)
     {
+        bodyDef.worldDrawing = true;
         PhysicsBody body = world.CreateBody(bodyDef);
+        
         if (!body.isValid) return body;
         PhysicsShape shape = body.CreateShape(
             new CircleGeometry { center = Vector2.zero, radius = radius },
