@@ -150,6 +150,7 @@ public class PbfFluidLite : MonoBehaviour
     static readonly FluidType FallbackType = new FluidType();
     readonly System.Diagnostics.Stopwatch stepWatch = new System.Diagnostics.Stopwatch();
     int stepCounter;
+    bool destroyed;   // set in OnDestroy: other scripts may still call us during scene teardown
     float gridMinX, gridMinY, gridMaxX, gridMaxY;
 
     static bool Finite(float f) { return !(float.IsNaN(f) || float.IsInfinity(f)); }
@@ -159,7 +160,7 @@ public class PbfFluidLite : MonoBehaviour
     // ================================================================== public API
     public void AddParticle(PhysicsBody body, int typeId)
     {
-        if (!body.isValid) return;
+        if (destroyed || !body.isValid) return;
         int t = ClampType(typeId);
         // Already registered: only the type changes. (Re-reading gravityScale here would capture OUR value.)
         if (indexOf.TryGetValue(body, out int existing)) { nType[existing] = t; return; }
@@ -280,7 +281,17 @@ public class PbfFluidLite : MonoBehaviour
 
     void OnDisable() { RestoreGravityScales(); }
 
-    void OnDestroy() { DisposeNative(); }
+    void OnDestroy()
+    {
+        // During scene teardown other scripts (e.g. the spawner's OnDestroy) can still call RemoveParticle, in either
+        // order. Empty the registry FIRST so those calls find nothing to touch, then free the native arrays.
+        destroyed = true;
+        indexOf.Clear();
+        simPoses.Clear();
+        for (int i = 0; i < count; i++) bodies[i] = default;
+        count = 0; massSum = 0f;
+        DisposeNative();
+    }
 
     void OnValidate()
     {
@@ -307,7 +318,7 @@ public class PbfFluidLite : MonoBehaviour
 
     void FixedUpdate()
     {
-        if (!runInFixedUpdate || !enablePBF) return;
+        if (destroyed || !runInFixedUpdate || !enablePBF) return;
         float dt = Time.fixedDeltaTime;
         if (dt <= 0f) return;
         if (autoSyncEveryFixedUpdate) SyncFromList();
