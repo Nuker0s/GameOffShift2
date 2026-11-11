@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -21,16 +22,23 @@ public class FPSCounter : MonoBehaviour
 
     public Color textColor = Color.white;
 
-    [Header("Update")]
-    [Tooltip("How often to refresh the displayed number. Smaller = more flickery.")]
-    public float updateInterval = 0.5f;
+    [Header("Outline")]
+    public bool useOutline = true;
+    public Color outlineColor = new Color(0f, 0f, 0f, 0.75f);
+    [Tooltip("Outline thickness in pixels.")]
+    public float outlineThickness = 1f;
 
-    [Tooltip("Show label as '60 FPS' if true, or just '60' if false.")]
-    public bool showLabel = true;
+    [Header("FPS")]
+    [Tooltip("How many seconds back the AVG is calculated over. Old frame times outside this window are thrown away every frame.")]
+    public float averageWindow = 5f;
 
     private Text fpsText;
-    private float timer;
-    private int frames;
+    private Outline fpsOutline;
+
+    // Sliding window: every frame we push the latest delta time and
+    // throw away anything older than averageWindow. AVG = frames / total time.
+    private readonly Queue<float> frameTimes = new Queue<float>();
+    private float windowSum;
 
     private void Awake()
     {
@@ -73,7 +81,7 @@ public class FPSCounter : MonoBehaviour
         rect.sizeDelta = boxSize;
 
         Text txt = textGO.AddComponent<Text>();
-        txt.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        txt.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         txt.fontSize = fontSize;
         txt.alignment = TextAnchor.UpperRight;
         txt.horizontalOverflow = HorizontalWrapMode.Overflow;
@@ -84,10 +92,11 @@ public class FPSCounter : MonoBehaviour
 
         // Add outline for readability on bright backgrounds
         Outline outline = textGO.AddComponent<Outline>();
-        outline.effectColor = new Color(0f, 0f, 0f, 0.75f);
-        outline.effectDistance = new Vector2(1f, 1f);
+        outline.effectColor = outlineColor;
+        outline.effectDistance = new Vector2(outlineThickness, -outlineThickness);
 
         fpsText = txt;
+        fpsOutline = outline;
         ApplyAppearance();
     }
 
@@ -104,6 +113,13 @@ public class FPSCounter : MonoBehaviour
         RectTransform rect = fpsText.rectTransform;
         rect.anchoredPosition = new Vector2(-padding.x, -padding.y);
         rect.sizeDelta = boxSize;
+
+        if (fpsOutline != null)
+        {
+            fpsOutline.enabled = useOutline;
+            fpsOutline.effectColor = outlineColor;
+            fpsOutline.effectDistance = new Vector2(outlineThickness, -outlineThickness);
+        }
     }
 
     private void Update()
@@ -111,19 +127,22 @@ public class FPSCounter : MonoBehaviour
         if (fpsText == null)
             return;
 
-        frames++;
-        timer += Time.unscaledDeltaTime;
+        // Current FPS = instant value from this frame (unscaled so timeScale doesn't lie)
+        float dt = Time.unscaledDeltaTime;
+        int current = dt > 0f ? Mathf.FloorToInt(1f / dt) : 0;
 
-        if (timer >= updateInterval)
-        {
-            // floored to int as requested
-            float avgFps = frames / timer;
-            int fps = Mathf.FloorToInt(avgFps);
+        // Sliding average: push new frame time, throw away anything older than the window.
+        // Updates in realtime every frame — no measure-then-reset cycle.
+        float window = Mathf.Max(averageWindow, 0.1f);
+        frameTimes.Enqueue(dt);
+        windowSum += dt;
+        while (windowSum > window && frameTimes.Count > 0)
+            windowSum -= frameTimes.Dequeue();
 
-            fpsText.text = showLabel ? fps + " FPS" : fps.ToString();
+        int avg = windowSum > 0f
+            ? Mathf.FloorToInt(frameTimes.Count / windowSum)
+            : 0;
 
-            frames = 0;
-            timer = 0f;
-        }
+        fpsText.text = "FPS " + current + " | AVG " + avg;
     }
 }
