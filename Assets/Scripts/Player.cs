@@ -30,7 +30,7 @@ public class Player : MonoBehaviour
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
-        
+        Application.targetFrameRate = 240;
         if (spawner == null) spawner = FindFirstObjectByType<PbfFluidSpawner>();
         if (spawner == null)
         {
