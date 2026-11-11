@@ -107,7 +107,7 @@ MonoBehaviour:
     m_ContactSpeed: 3
     m_ContactRecycleDistance: 0.049999997
     m_MaximumLinearSpeed: 400
-    m_DrawOptions: -1
+    m_DrawOptions: 32
     m_DrawFillOptions: 7
     m_DrawContactType: 4
     m_DrawFilter: 0
@@ -404,6 +404,6 @@ MonoBehaviour:
   m_InitialWorldCapacity: 4
   m_ConcurrentSimulations: 2
   m_LengthUnitsPerMeter: 1
-  m_RenderingMode: 2
+  m_RenderingMode: 0
   m_DisableSimulation: 0
   m_AlwaysDrawWorlds: 1

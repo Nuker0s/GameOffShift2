@@ -325,7 +325,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -582,7 +582,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -926,7 +926,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -1183,7 +1183,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -1515,7 +1515,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -2255,7 +2255,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -2452,7 +2452,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -2734,7 +2734,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
@@ -3289,7 +3289,7 @@ MonoBehaviour:
       m_TangentSpeed: 0
       m_CustomColor:
         serializedVersion: 2
-        rgba: 4294639871
+        rgba: 4283914071
     m_Density: 1
     m_IsTrigger: 0
     m_TriggerEvents: 0
