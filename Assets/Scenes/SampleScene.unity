@@ -119,6 +119,37 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1 &32663878
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 32663879}
+  m_Layer: 0
+  m_Name: FluidJobs
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &32663879
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 32663878}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -26.66413, y: -10.47395, z: -15.38494}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &195335857
 GameObject:
   m_ObjectHideFlags: 0
@@ -1793,15 +1824,24 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db4f1f93d9a4ab240a21016ca3757641, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidLite
-  cellSize: 1.19
+  smoothingFromSpacing: 1
+  smoothingToSpacing: 2
   smoothingRadius: 1.5
+  gridOrigin: {x: -47.1, y: -31.6}
+  gridColumns: 127
+  gridRows: 90
+  showGridGizmo: 1
+  drawGridWhenUnselected: 1
   iterations: 1
   enablePBF: 1
   runInFixedUpdate: 1
   maxSpeed: 20
-  maxCorrection: 0.05
+  maxCorrectionRatio: 0.6
   relaxation: 1
   viscosityScale: 0.49
+  useJobs: 1
+  parallelThreshold: 400
+  jobBatchSize: 32
   types:
   - name: Water
     restDensity: 2.5066903
@@ -1812,22 +1852,22 @@ MonoBehaviour:
   - name: Oil
     restDensity: 1.8800178
     restDensityScale: 0.75
-    stiffness: 0.3
+    stiffness: 1
     viscosity: 0.6
-    gravityMultiplier: 1
-  defaultType: 0
+    gravityMultiplier: -1
+  defaultType: 1
   manualPoses: []
   autoSyncSource: []
   autoSyncEveryFixedUpdate: 0
   autoCalibrate: 1
-  referenceSpacing: 0.65
-  referenceMass: 0.2
+  referenceSpacing: 0.9
+  referenceMass: 0.1
   showParticlesViaPhysicsDraw: 1
-  showGridGizmo: 1
-  drawGridWhenUnselected: 1
   showLogs: 0
+  updateDiagnostics: 1
   diagAvgDensityRatio: 1.0383236
   diagCompressed: 675
+  diagOutsideGrid: 0
   diagStepMs: 6.2941
 --- !u!4 &936009784
 Transform:
@@ -1838,7 +1878,7 @@ Transform:
   m_GameObject: {fileID: 936009782}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -1.29445, y: -9.35125, z: 0.25}
+  m_LocalPosition: {x: -1.09, y: -14.02, z: 0.25}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1856,8 +1896,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 830e684be2dadd04a90c417a720c5716, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidSpawner
-  sim: {fileID: 0}
-  particleRadius: 0.14
+  sim: {fileID: 936009783}
+  spawnOrigin: {x: -10.33, y: -27.16}
+  spacing: 0.51
+  layoutByArea: 1
+  areaSize: {x: 18, y: 35.8}
+  rows: 28
+  cols: 34
+  jitter: 0.02
+  radiusFromSpacing: 1
+  radiusRatio: 0.283
+  particleRadius: 0.38
+  massFromBulkDensity: 0
+  bulkDensity: 8
   particleMass: 0.2
   particleDensity: 1
   particleFriction: 0.1
@@ -1866,11 +1917,6 @@ MonoBehaviour:
   particleLinearDamping: 0.1
   particleGravityScale: 1
   particleFreezeRotation: 1
-  spawnOrigin: {x: -8.51, y: -7.76}
-  rows: 28
-  cols: 27
-  spacing: 0.65
-  jitter: 0.02
   spawnTypeId: 0
   spawnOnStart: 1
   clearBeforeSpawn: 1
@@ -3042,7 +3088,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1537109694}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: ec93707a35eb44d4da2f567d9614546c, type: 3}
   m_Name: 
@@ -3530,3 +3576,4 @@ SceneRoots:
   - {fileID: 519420032}
   - {fileID: 936009784}
   - {fileID: 1537109698}
+  - {fileID: 32663879}
