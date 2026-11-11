@@ -119,37 +119,6 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &32663878
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 32663879}
-  m_Layer: 0
-  m_Name: FluidJobs
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &32663879
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 32663878}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -26.66413, y: -10.47395, z: -15.38494}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &195335857
 GameObject:
   m_ObjectHideFlags: 0
@@ -1838,7 +1807,7 @@ MonoBehaviour:
   maxSpeed: 20
   maxCorrectionRatio: 0.6
   relaxation: 1
-  viscosityScale: 0.49
+  viscosityScale: 1
   useJobs: 1
   parallelThreshold: 400
   jobBatchSize: 32
@@ -1854,7 +1823,7 @@ MonoBehaviour:
     restDensityScale: 0.75
     stiffness: 1
     viscosity: 0.6
-    gravityMultiplier: -1
+    gravityMultiplier: 1
   defaultType: 1
   manualPoses: []
   autoSyncSource: []
@@ -2446,7 +2415,7 @@ Transform:
   m_GameObject: {fileID: 1145265393}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 4.73912, y: 37.2, z: 0}
+  m_LocalPosition: {x: 4.73912, y: 36.9, z: 0}
   m_LocalScale: {x: 44.2, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -3576,4 +3545,3 @@ SceneRoots:
   - {fileID: 519420032}
   - {fileID: 936009784}
   - {fileID: 1537109698}
-  - {fileID: 32663879}
