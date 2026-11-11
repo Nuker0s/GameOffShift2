@@ -1,9 +1,12 @@
 using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
 using UnityEngine;
 using Unity.U2D.Physics;
 
 /// <summary>
-/// PBF-lite fluid layered on top of Physics Core 2D.
+/// PBF-lite fluid layered on top of Physics Core 2D, Burst + Jobs.
 ///
 /// WHO DOES WHAT
 ///   Physics Core 2D (engine): integration, gravity (body.gravityScale), damping, mass, shape contacts,
@@ -11,15 +14,18 @@ using Unity.U2D.Physics;
 ///   This script:              the one thing the engine has no concept of: the inter-particle density
 ///                             constraint (pressure) and viscosity.
 ///
-/// HOW
-///   FixedUpdate runs immediately before the engine step. Each step we READ position + linearVelocity,
-///   predict where the engine is about to take every particle, run PBF on the predicted positions, and
-///   hand the result back as ONE batched force (F = m * dv / dt) through PhysicsBody.SetBatchForce.
-///   We never write position or velocity, so there is exactly one integrator: the engine.
+/// PER FIXED STEP (runs right before the engine step)
+///   main thread : read positions + velocities in two batched engine calls            -> NativeArrays
+///   Burst jobs  : predict -> static-grid bucket -> [density/lambda -> correction -> re-bucket] x iterations
+///                 -> constraint velocity -> viscosity + force
+///   main thread : hand the forces back as ONE batched force (F = m * dv / dt)
+///   The engine integrates them together with gravity and contacts. We never write position or velocity.
 ///
-/// ASSUMPTION
-///   The default world simulates in FixedUpdate (the default), i.e. one engine step per FixedUpdate and
-///   user forces are cleared after each step.
+/// REQUIRES   Burst package (com.unity.burst; it brings Mathematics).
+/// ASSUMES    The default world simulates in FixedUpdate (the default): one engine step per FixedUpdate,
+///            user forces cleared after each step.
+/// SCRIPTING SYMBOL  PBF_PER_BODY_READ  switches the batched engine reads to per-body reads (slower, but needs
+///            only APIs that exist in every Unity.U2D.Physics version).
 /// </summary>
 [DefaultExecutionOrder(10)]
 public class PbfFluidLite : MonoBehaviour
@@ -38,9 +44,25 @@ public class PbfFluidLite : MonoBehaviour
         public float gravityMultiplier = 1f;
     }
 
-    [Header("Neighbour search (grid auto-fits the particles every step)")]
-    public float cellSize = 0.5f;
-    public float smoothingRadius = 0.5f;
+    // ------------------------------------------------------------------ inspector
+    [Header("Smoothing radius (kernel size)")]
+    [Tooltip("ON: radius = Reference Spacing x ratio, so changing the spawner's spacing re-scales the whole solver. " +
+             "OFF: use Smoothing Radius below.")]
+    public bool smoothingFromSpacing = true;
+    [Tooltip("About 2 = ~8 neighbours per particle. Lower = cheaper but lumpier.")]
+    public float smoothingToSpacing = 2f;
+    public float smoothingRadius = 0.8f;
+    public float EffectiveSmoothing =>
+        Mathf.Max(0.05f, smoothingFromSpacing ? referenceSpacing * smoothingToSpacing : smoothingRadius);
+
+    [Header("Grid (STATIC. Allocated once; cell size = smoothing radius)")]
+    [Tooltip("World position of the grid's bottom-left corner.")]
+    public Vector2 gridOrigin = new Vector2(-10f, -10f);
+    [Min(1)] public int gridColumns = 32;
+    [Min(1)] public int gridRows = 32;
+    [Tooltip("Particles outside the grid are clamped into the border cells: they keep working, but get slower if many pile up there.")]
+    public bool showGridGizmo = true;
+    public bool drawGridWhenUnselected = true;
 
     [Header("Solver")]
     [Range(1, 10)] public int iterations = 3;
@@ -49,12 +71,19 @@ public class PbfFluidLite : MonoBehaviour
     public bool runInFixedUpdate = true;
     [Tooltip("Cap on how fast the fluid pass may ACCELERATE a particle (m/s).")]
     public float maxSpeed = 20f;
-    [Tooltip("Cap on the positional correction per iteration (m). Safety net only.")]
-    public float maxCorrection = 0.3f;
-    [Tooltip("Softening added to the PBF denominator. Higher = softer + more stable.")]
+    [Tooltip("Cap on the positional correction per iteration, as a fraction of the smoothing radius. Safety net only.")]
+    public float maxCorrectionRatio = 0.6f;
+    [Tooltip("Softening of the PBF denominator, relative to the rest state (scale-independent). Higher = softer + more stable.")]
     public float relaxation = 1f;
     [Tooltip("Scales type.viscosity into the fraction of relative velocity removed per step.")]
     public float viscosityScale = 0.5f;
+
+    [Header("Burst / Jobs")]
+    [Tooltip("Run the passes on worker threads. Below Parallel Threshold they run on the main thread (still Burst-compiled).")]
+    public bool useJobs = true;
+    [Tooltip("Scheduling a job costs a few microseconds; below this many particles one thread is faster.")]
+    public int parallelThreshold = 400;
+    [Range(8, 256)] public int jobBatchSize = 32;
 
     [Header("Types")]
     public List<FluidType> types = new List<FluidType>()
@@ -74,54 +103,54 @@ public class PbfFluidLite : MonoBehaviour
              "Can never drift out of sync with the real bodies. OFF: use FluidType.restDensity as typed.")]
     public bool autoCalibrate = true;
     [Tooltip("Particle spacing at rest. The spawner sets this for you.")]
-    public float referenceSpacing = 0.25f;
+    public float referenceSpacing = 0.4f;
     [Tooltip("Only used by the 'Calibrate' context menu / when Auto Calibrate is OFF.")]
-    public float referenceMass = 0.5f;
+    public float referenceMass = 1.28f;
 
     [Header("Debug")]
     public bool showParticlesViaPhysicsDraw = true;
-    public bool showGridGizmo = true;
-    public bool drawGridWhenUnselected = true;
     public bool showLogs = false;
 
     [Header("Diagnostics (written by the sim, read-only)")]
-    [Tooltip("Mean rho/rho0 at the start of the step. Stuck well below 1 = nothing is ever compressed = no pressure.")]
+    public bool updateDiagnostics = true;
+    [Tooltip("Mean rho/rho0 at the start of the step (sampled every 8th step). Stuck well below 1 = nothing is compressed = no pressure.")]
     public float diagAvgDensityRatio;
     [Tooltip("Particles with rho > rho0 (the ones the pressure solver is acting on).")]
     public int diagCompressed;
-    [Tooltip("Cost of the whole fluid pass, milliseconds.")]
+    [Tooltip("Particles currently outside the static grid (clamped into border cells).")]
+    public int diagOutsideGrid;
+    [Tooltip("Cost of the whole fluid pass on the main thread, milliseconds.")]
     public float diagStepMs;
 
     public int ParticleCount => count;
 
-    // ------------------------------------------------------------------ registry (struct-of-arrays)
+    // ------------------------------------------------------------------ registry
     PhysicsBody[] bodies;
-    int[] typeOf;
     float[] baseGs;      // the body's own gravityScale when it was registered
     float[] appliedGs;   // what we last wrote to body.gravityScale (NaN = not written yet)
-    float[] mass;
+    PhysicsBody.BatchForce[] forceBatch;
+    NativeArray<float> nMass;   // job-visible registry data
+    NativeArray<int> nType;
     int count;
+    float massSum;
     readonly Dictionary<PhysicsBody, int> indexOf = new Dictionary<PhysicsBody, int>();
     readonly HashSet<PhysicsPose> simPoses = new HashSet<PhysicsPose>();
 
-    // ------------------------------------------------------------------ per-step scratch (never allocated in the loop)
-    Vector2[] pred, pos0, vPred, vCon, vOut, delta;
-    float[] lambda, rho0Arr, stiffArr, viscArr;
-    int[] cellOf, cellItems;
-    PhysicsBody.BatchForce[] forceBatch;
-
-    // spatial grid, rebuilt from the particle bounding box so particles can never "leave" it
-    const int MaxCells = 1 << 16;
-    int[] cellStart, cellFill;
-    int cellsX, cellsY;
-    float effectiveCell = 0.5f, invCell = 2f;
-    Vector2 gridMin;
+    // ------------------------------------------------------------------ per-step native scratch
+    NativeArray<float2> nX, nV, nVPred, nPos0, nPredA, nPredB, nVCon, nForce;
+    NativeArray<float> nGs, nLambda, nRatio;
+    NativeArray<byte> nActive;
+    NativeArray<int> nCellOf, nCellItems, nCellStart, nCellFill;
+    NativeArray<PbfTypeParams> nTypes;
+    float[] typeGm;
 
     // lattice-sum cache for calibration
     float cacheH = -1f, cacheSp = -1f, cacheSum;
 
+    static readonly FluidType FallbackType = new FluidType();
     readonly System.Diagnostics.Stopwatch stepWatch = new System.Diagnostics.Stopwatch();
     int stepCounter;
+    float gridMinX, gridMinY, gridMaxX, gridMaxY;
 
     static bool Finite(float f) { return !(float.IsNaN(f) || float.IsInfinity(f)); }
     static bool Finite(Vector2 v) { return Finite(v.x) && Finite(v.y); }
@@ -133,15 +162,17 @@ public class PbfFluidLite : MonoBehaviour
         if (!body.isValid) return;
         int t = ClampType(typeId);
         // Already registered: only the type changes. (Re-reading gravityScale here would capture OUR value.)
-        if (indexOf.TryGetValue(body, out int existing)) { typeOf[existing] = t; return; }
+        if (indexOf.TryGetValue(body, out int existing)) { nType[existing] = t; return; }
         EnsureCapacity(count + 1);
         int i = count++;
         float gs = body.gravityScale;
+        float m = ReadMass(body);
         bodies[i] = body;
-        typeOf[i] = t;
         baseGs[i] = Finite(gs) ? gs : 1f;
         appliedGs[i] = float.NaN;
-        mass[i] = ReadMass(body);
+        nMass[i] = m;
+        nType[i] = t;
+        massSum += m;
         indexOf[body] = i;
     }
     public void AddParticle(PhysicsBody body) { AddParticle(body, ClampType(defaultType)); }
@@ -163,7 +194,7 @@ public class PbfFluidLite : MonoBehaviour
     {
         if (!body.isValid) return;
         int t = ClampType(typeId);
-        if (indexOf.TryGetValue(body, out int i)) typeOf[i] = t; else AddParticle(body, t);
+        if (indexOf.TryGetValue(body, out int i)) nType[i] = t; else AddParticle(body, t);
     }
 
     public void RemoveParticle(PhysicsBody body)
@@ -189,13 +220,13 @@ public class PbfFluidLite : MonoBehaviour
         RestoreGravityScales();
         indexOf.Clear(); simPoses.Clear(); manualPoses.Clear();
         for (int i = 0; i < count; i++) bodies[i] = default;
-        count = 0;
+        count = 0; massSum = 0f;
     }
     public void Clear() => ClearParticles();
 
     public int GetParticleType(PhysicsBody body)
     {
-        return indexOf.TryGetValue(body, out int i) ? typeOf[i] : ClampType(defaultType);
+        return indexOf.TryGetValue(body, out int i) ? nType[i] : ClampType(defaultType);
     }
 
     public int ClampType(int t)
@@ -209,10 +240,15 @@ public class PbfFluidLite : MonoBehaviour
     /// <summary>Re-read body masses (call if you change masses after registering).</summary>
     public void RefreshParticleMasses()
     {
-        for (int i = 0; i < count; i++) if (bodies[i].isValid) mass[i] = ReadMass(bodies[i]);
+        massSum = 0f;
+        for (int i = 0; i < count; i++)
+        {
+            if (bodies[i].isValid) nMass[i] = ReadMass(bodies[i]);
+            massSum += nMass[i];
+        }
     }
 
-    /// <summary>Called by the spawner so calibration always matches what was actually spawned.</summary>
+    /// <summary>Called by the spawner so smoothing radius + calibration always match what was actually spawned.</summary>
     public void ConfigureReference(float spacing, float particleMass)
     {
         referenceSpacing = Mathf.Max(0.01f, spacing);
@@ -236,7 +272,7 @@ public class PbfFluidLite : MonoBehaviour
     public void CalibrateRestDensity()
     {
         float rho0 = ApplyCalibrationToTypes();
-        Debug.Log($"[PbfFluidLite] rest density = {rho0:F3} (h={Mathf.Max(0.05f, smoothingRadius)}, spacing={Mathf.Max(0.01f, referenceSpacing)}, mass={referenceMass}).");
+        Debug.Log($"[PbfFluidLite] rest density = {rho0:F3} (h={EffectiveSmoothing}, spacing={Mathf.Max(0.01f, referenceSpacing)}, mass={referenceMass}).");
     }
 
     // ================================================================== lifecycle
@@ -244,16 +280,23 @@ public class PbfFluidLite : MonoBehaviour
 
     void OnDisable() { RestoreGravityScales(); }
 
+    void OnDestroy() { DisposeNative(); }
+
     void OnValidate()
     {
         if (smoothingRadius < 0.05f) smoothingRadius = 0.05f;
-        if (cellSize < 0.05f) cellSize = 0.05f;
+        if (smoothingToSpacing < 1.2f) smoothingToSpacing = 1.2f;
+        if (gridColumns < 1) gridColumns = 1;
+        if (gridRows < 1) gridRows = 1;
+        if (gridColumns > 1024) gridColumns = 1024;
+        if (gridRows > 1024) gridRows = 1024;
         if (iterations < 1) iterations = 1;
         if (iterations > 10) iterations = 10;
         if (maxSpeed < 0.1f) maxSpeed = 0.1f;
-        if (maxCorrection < 0.01f) maxCorrection = 0.01f;
+        if (maxCorrectionRatio < 0.05f) maxCorrectionRatio = 0.05f;
         if (relaxation < 1e-6f) relaxation = 1e-6f;
         if (viscosityScale < 0f) viscosityScale = 0f;
+        if (parallelThreshold < 0) parallelThreshold = 0;
         if (referenceSpacing < 0.01f) referenceSpacing = 0.01f;
         if (referenceMass <= 0f) referenceMass = 1f;
         if (types == null) types = new List<FluidType>();
@@ -279,181 +322,133 @@ public class PbfFluidLite : MonoBehaviour
         int n = count;
         if (n == 0 || types == null || types.Count == 0) return;
         stepWatch.Restart();
+        stepCounter++;
+        bool doDiag = updateDiagnostics && (stepCounter & 7) == 0;
 
-        float h = Mathf.Max(0.05f, smoothingRadius);
+        int cols = Mathf.Max(1, gridColumns), rows = Mathf.Max(1, gridRows);
+        EnsureGrid(cols * rows);
+
+        float h = EffectiveSmoothing;
         float h2 = h * h;
         float h6 = h2 * h2 * h2;
         float poly6 = 315f / (64f * Mathf.PI * h6 * h2 * h);   // 315 / (64 pi h^9)
         float spikyGrad = -45f / (Mathf.PI * h6);
         float selfW = poly6 * h6;
         float invDt = 1f / dt;
+        float eps = relaxation * 0.25f / h2;                    // 0.25/h^2 keeps the softening scale-independent
+        float maxCorr = maxCorrectionRatio * h;
         Vector2 gravity = bodies[0].world.gravity;              // the world the particles actually live in
 
-        float massSum = 0f;
-        for (int i = 0; i < n; i++) massSum += mass[i];
+        gridMinX = gridOrigin.x; gridMinY = gridOrigin.y;
+        gridMaxX = gridMinX + cols * h; gridMaxY = gridMinY + rows * h;
+
+        // ---- per-type table (tiny) ----
+        int typeCount = types.Count;
+        EnsureTypeTable(typeCount);
         float baseRho0 = autoCalibrate ? (massSum / n) * CurrentLatticeSum(h) : 0f;
-
-        // ---- 1. read engine state, predict where the engine is about to put each particle
-        for (int i = 0; i < n; i++)
+        for (int t = 0; t < typeCount; t++)
         {
-            FluidType ft = types[ClampType(typeOf[i])];
-            float gsEff = baseGs[i] * ft.gravityMultiplier;
-            if (appliedGs[i] != gsEff) { bodies[i].gravityScale = gsEff; appliedGs[i] = gsEff; }   // engine applies gravity
-
-            Vector2 x = bodies[i].position;
-            Vector2 v = bodies[i].linearVelocity;
-            Vector2 vP = v + gravity * (gsEff * dt);
-            Vector2 p0 = x + vP * dt;
-            vPred[i] = vP; pos0[i] = p0; pred[i] = p0;
-
-            rho0Arr[i] = autoCalibrate
-                ? Mathf.Max(0.001f, baseRho0 * Mathf.Max(0.05f, ft.restDensityScale))
-                : Mathf.Max(0.001f, ft.restDensity);
-            stiffArr[i] = Mathf.Clamp01(ft.stiffness);
-            viscArr[i] = Mathf.Clamp01(ft.viscosity * viscosityScale);
+            FluidType ft = types[t] ?? FallbackType;
+            nTypes[t] = new PbfTypeParams
+            {
+                rho0 = autoCalibrate
+                    ? Mathf.Max(0.001f, baseRho0 * Mathf.Max(0.05f, ft.restDensityScale))
+                    : Mathf.Max(0.001f, ft.restDensity),
+                stiffness = Mathf.Clamp01(ft.stiffness),
+                viscosity = Mathf.Clamp01(ft.viscosity * viscosityScale),
+            };
+            typeGm[t] = ft.gravityMultiplier;
         }
 
-        // ---- 2. PBF density constraint on the predicted positions
-        BuildGrid(pred, n);
-        float sumRatio = 0f; int compressed = 0;
+        // ---- 1. read engine state (two batched native calls), push gravity scales ----
+        int outside = 0;
+#if PBF_PER_BODY_READ
+        for (int i = 0; i < n; i++)
+            if (StoreState(i, bodies[i].position, bodies[i].linearVelocity, typeCount)) outside++;
+#else
+        var span = new System.ReadOnlySpan<PhysicsBody>(bodies, 0, n);
+        NativeArray<PhysicsBody.BatchTransform> tr = PhysicsBody.GetBatchTransform(span, Allocator.Temp);
+        NativeArray<PhysicsBody.BatchVelocity> vl = PhysicsBody.GetBatchVelocity(span, Allocator.Temp);
+        for (int i = 0; i < n; i++)
+        {
+            Vector2 px = tr[i].position;
+            Vector2 pv = vl[i].linearVelocity;
+            if (StoreState(i, px, pv, typeCount)) outside++;
+        }
+        tr.Dispose();
+        vl.Dispose();
+#endif
+
+        // ---- 2. Burst jobs ----
+        bool par = useJobs && n >= parallelThreshold;
+        int bs = Mathf.Max(1, jobBatchSize);
+        JobHandle hnd = default;
+
+        var predict = new PbfPredictJob
+        {
+            x = nX, v = nV, gs = nGs, gravity = gravity, dt = dt,
+            vPred = nVPred, pos0 = nPos0, pred = nPredA,
+        };
+        if (par) hnd = predict.Schedule(n, bs, hnd); else predict.Run(n);
+
+        NativeArray<float2> cur = nPredA, nxt = nPredB;
+        var grid = new PbfGridJob
+        {
+            p = cur, active = nActive, cellOf = nCellOf, cellStart = nCellStart, cellFill = nCellFill, cellItems = nCellItems,
+            origin = gridOrigin, invCell = 1f / h, cols = cols, rows = rows, n = n,
+        };
+        if (par) hnd = grid.Schedule(hnd); else grid.Run();
+
         for (int it = 0; it < iterations; it++)
         {
-            // pass A: density + lambda
-            for (int i = 0; i < n; i++)
+            var dens = new PbfDensityJob
             {
-                int c0 = cellOf[i];
-                if (c0 < 0) { lambda[i] = 0f; continue; }
-                int cy0 = c0 / cellsX, cx0 = c0 - cy0 * cellsX;
-                Vector2 pi = pred[i];
-                float invRho0 = 1f / rho0Arr[i];
-                float dens = mass[i] * selfW;
-                Vector2 gI = Vector2.zero; float s2 = 0f;
-                for (int oy = -1; oy <= 1; oy++)
-                {
-                    int ny = cy0 + oy; if (ny < 0 || ny >= cellsY) continue;
-                    for (int ox = -1; ox <= 1; ox++)
-                    {
-                        int nx = cx0 + ox; if (nx < 0 || nx >= cellsX) continue;
-                        int c = ny * cellsX + nx;
-                        int end = cellStart[c + 1];
-                        for (int k = cellStart[c]; k < end; k++)
-                        {
-                            int j = cellItems[k]; if (j == i) continue;
-                            Vector2 d = pi - pred[j];
-                            float r2 = d.x * d.x + d.y * d.y;
-                            if (r2 >= h2 || r2 < 1e-12f) continue;
-                            float q = h2 - r2;
-                            float mj = mass[j];
-                            dens += mj * poly6 * q * q * q;
-                            float r = Mathf.Sqrt(r2);
-                            float hr = h - r;
-                            // dC_i/dp_i contribution of neighbour j: (m_j / rho0) * gradW
-                            Vector2 g = d * (spikyGrad * hr * hr / r * mj * invRho0);
-                            gI += g; s2 += g.x * g.x + g.y * g.y;
-                        }
-                    }
-                }
-                float ratio = dens * invRho0;
-                if (it == 0) { sumRatio += ratio; if (ratio > 1f) compressed++; }
-                float C = ratio - 1f;
-                if (C <= 0f) { lambda[i] = 0f; continue; }      // only resist compression
-                s2 += gI.x * gI.x + gI.y * gI.y;
-                lambda[i] = -C / (s2 + relaxation);
-            }
+                pred = cur, mass = nMass, type = nType, types = nTypes,
+                cellOf = nCellOf, cellStart = nCellStart, cellItems = nCellItems,
+                cols = cols, rows = rows, typeCount = typeCount,
+                h = h, h2 = h2, poly6 = poly6, spikyGrad = spikyGrad, selfW = selfW, eps = eps,
+                writeRatio = doDiag && it == 0, lambda = nLambda, ratioOut = nRatio,
+            };
+            if (par) hnd = dens.Schedule(n, bs, hnd); else dens.Run(n);
 
-            // pass B: position correction.  dp_i = (1/rho0) * sum_j (m_j*lambda_i + m_i*lambda_j) * gradW_ij
-            for (int i = 0; i < n; i++)
+            var corr = new PbfCorrectionJob
             {
-                int c0 = cellOf[i];
-                if (c0 < 0) { delta[i] = Vector2.zero; continue; }
-                int cy0 = c0 / cellsX, cx0 = c0 - cy0 * cellsX;
-                Vector2 pi = pred[i];
-                float li = lambda[i], mi = mass[i];
-                Vector2 corr = Vector2.zero;
-                for (int oy = -1; oy <= 1; oy++)
-                {
-                    int ny = cy0 + oy; if (ny < 0 || ny >= cellsY) continue;
-                    for (int ox = -1; ox <= 1; ox++)
-                    {
-                        int nx = cx0 + ox; if (nx < 0 || nx >= cellsX) continue;
-                        int c = ny * cellsX + nx;
-                        int end = cellStart[c + 1];
-                        for (int k = cellStart[c]; k < end; k++)
-                        {
-                            int j = cellItems[k]; if (j == i) continue;
-                            float lj = lambda[j];
-                            if (li == 0f && lj == 0f) continue;
-                            Vector2 d = pi - pred[j];
-                            float r2 = d.x * d.x + d.y * d.y;
-                            if (r2 >= h2 || r2 < 1e-12f) continue;
-                            float r = Mathf.Sqrt(r2);
-                            float hr = h - r;
-                            corr += d * (spikyGrad * hr * hr / r * (mass[j] * li + mi * lj));
-                        }
-                    }
-                }
-                corr *= stiffArr[i] / rho0Arr[i];
-                float mag = corr.magnitude;
-                if (mag > maxCorrection) corr *= maxCorrection / mag;
-                delta[i] = corr;
-            }
+                pred = cur, lambda = nLambda, mass = nMass, type = nType, types = nTypes,
+                cellOf = nCellOf, cellStart = nCellStart, cellItems = nCellItems,
+                cols = cols, rows = rows, typeCount = typeCount,
+                h = h, h2 = h2, spikyGrad = spikyGrad, maxCorr = maxCorr, predNext = nxt,
+            };
+            if (par) hnd = corr.Schedule(n, bs, hnd); else corr.Run(n);
 
-            for (int i = 0; i < n; i++) pred[i] += delta[i];
-            BuildGrid(pred, n);   // fresh grid for the next iteration and for the viscosity pass
+            NativeArray<float2> tmp = cur; cur = nxt; nxt = tmp;   // double buffer
+            grid.p = cur;                                          // re-bucket the moved particles
+            if (par) hnd = grid.Schedule(hnd); else grid.Run();
         }
 
-        // ---- 3. velocity the constraint wants (PBF: v = (x* - x)/dt, expressed relative to the engine's own step)
-        for (int i = 0; i < n; i++)
+        var vel = new PbfVelocityJob
         {
-            Vector2 vP = vPred[i];
-            Vector2 vC = vP + (pred[i] - pos0[i]) * invDt;
-            float cap = Mathf.Max(maxSpeed, vP.magnitude);       // limit how much we ADD, never brake an existing speed
-            float sp = vC.magnitude;
-            if (sp > cap && sp > 1e-6f) vC *= cap / sp;
-            vCon[i] = vC;
-        }
+            vPred = nVPred, pred = cur, pos0 = nPos0, invDt = invDt, maxSpeed = maxSpeed, vCon = nVCon,
+        };
+        if (par) hnd = vel.Schedule(n, bs, hnd); else vel.Run(n);
 
-        // ---- 4. XSPH viscosity: blend toward the kernel-weighted mean velocity of the neighbours
-        for (int i = 0; i < n; i++)
+        var visc = new PbfViscosityForceJob
         {
-            Vector2 vc = vCon[i];
-            float visc = viscArr[i];
-            int c0 = cellOf[i];
-            if (visc <= 0f || c0 < 0) { vOut[i] = vc; continue; }
-            int cy0 = c0 / cellsX, cx0 = c0 - cy0 * cellsX;
-            Vector2 pi = pred[i];
-            Vector2 acc = Vector2.zero; float wSum = 0f;
-            for (int oy = -1; oy <= 1; oy++)
-            {
-                int ny = cy0 + oy; if (ny < 0 || ny >= cellsY) continue;
-                for (int ox = -1; ox <= 1; ox++)
-                {
-                    int nx = cx0 + ox; if (nx < 0 || nx >= cellsX) continue;
-                    int c = ny * cellsX + nx;
-                    int end = cellStart[c + 1];
-                    for (int k = cellStart[c]; k < end; k++)
-                    {
-                        int j = cellItems[k]; if (j == i) continue;
-                        Vector2 d = pi - pred[j];
-                        float r2 = d.x * d.x + d.y * d.y;
-                        if (r2 >= h2 || r2 < 1e-12f) continue;
-                        float q = h2 - r2; float w = q * q * q;
-                        acc += vCon[j] * w; wSum += w;
-                    }
-                }
-            }
-            if (wSum > 1e-12f) vc += (acc / wSum - vc) * visc;
-            vOut[i] = vc;
-        }
+            vCon = nVCon, vPred = nVPred, pred = cur, mass = nMass, type = nType, types = nTypes,
+            cellOf = nCellOf, cellStart = nCellStart, cellItems = nCellItems,
+            cols = cols, rows = rows, typeCount = typeCount, h2 = h2, invDt = invDt, force = nForce,
+        };
+        if (par) hnd = visc.Schedule(n, bs, hnd); else visc.Run(n);
 
-        // ---- 5. hand the result to the engine as ONE batched force.
-        // The engine will add gravity itself, so we only ask for the difference to the gravity-only prediction.
+        if (par) hnd.Complete();
+
+        // ---- 3. hand the result to the engine as ONE batched force.
+        // The engine adds gravity itself; the jobs already expressed the force relative to the gravity-only prediction.
         int nf = 0;
         for (int i = 0; i < n; i++)
         {
-            Vector2 dv = vOut[i] - vPred[i];
-            if (dv.x * dv.x + dv.y * dv.y < 1e-10f) continue;
-            Vector2 f = dv * (mass[i] * invDt);
+            float2 f2 = nForce[i];
+            if (f2.x * f2.x + f2.y * f2.y < 1e-10f) continue;
+            Vector2 f = f2;
             if (!Finite(f)) continue;
             PhysicsBody.BatchForce bf = new PhysicsBody.BatchForce(bodies[i]);
             bf.ApplyForceToCenter(f);
@@ -461,76 +456,39 @@ public class PbfFluidLite : MonoBehaviour
         }
         if (nf > 0) PhysicsBody.SetBatchForce(new System.ReadOnlySpan<PhysicsBody.BatchForce>(forceBatch, 0, nf));
 
-        diagAvgDensityRatio = sumRatio / n;
-        diagCompressed = compressed;
+        if (doDiag)
+        {
+            float sum = 0f; int comp = 0, act = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (nActive[i] == 0) continue;
+                float r = nRatio[i]; sum += r; act++;
+                if (r > 1f) comp++;
+            }
+            diagAvgDensityRatio = act > 0 ? sum / act : 0f;
+            diagCompressed = comp;
+            diagOutsideGrid = outside;
+        }
         diagStepMs = (float)stepWatch.Elapsed.TotalMilliseconds;
-        if (showLogs && (++stepCounter % 100) == 0)
-            Debug.Log($"[PbfFluidLite] n={n} avg rho/rho0={diagAvgDensityRatio:F2} compressed={compressed} cost={diagStepMs:F2} ms");
+        if (showLogs && (stepCounter % 100) == 0)
+            Debug.Log($"[PbfFluidLite] n={n} {(par ? "jobs" : "main-thread burst")} avg rho/rho0={diagAvgDensityRatio:F2} " +
+                      $"compressed={diagCompressed} outsideGrid={diagOutsideGrid} cost={diagStepMs:F2} ms");
     }
 
-    // ================================================================== neighbour grid (counting sort, zero allocation)
-    void BuildGrid(Vector2[] p, int n)
+    /// <summary>Copies one particle's engine state into the job arrays and pushes the gravity scale. Returns true if outside the grid.</summary>
+    bool StoreState(int i, Vector2 x, Vector2 v, int typeCount)
     {
-        float cs = Mathf.Max(cellSize, smoothingRadius, 0.05f);
-        float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-        bool any = false;
-        for (int i = 0; i < n; i++)
+        int t = nType[i]; if (t >= typeCount) t = typeCount - 1;
+        float gsEff = baseGs[i] * typeGm[t];
+        if (appliedGs[i] != gsEff) { bodies[i].gravityScale = gsEff; appliedGs[i] = gsEff; }   // the ENGINE applies gravity
+        nGs[i] = gsEff;
+        if (!Finite(x) || !Finite(v))
         {
-            Vector2 q = p[i];
-            if (!Finite(q)) continue;
-            if (q.x < minX) minX = q.x;
-            if (q.y < minY) minY = q.y;
-            if (q.x > maxX) maxX = q.x;
-            if (q.y > maxY) maxY = q.y;
-            any = true;
+            nActive[i] = 0; nX[i] = new float2(0f, 0f); nV[i] = new float2(0f, 0f);
+            return false;
         }
-        if (!any)
-        {
-            cellsX = cellsY = 0;
-            for (int i = 0; i < n; i++) cellOf[i] = -1;
-            return;
-        }
-
-        // If the particles are spread very wide, enlarge the cells until the grid fits. Still correct: cells >= h.
-        double w = (double)maxX - minX, ht = (double)maxY - minY;
-        int cx, cy;
-        for (; ; )
-        {
-            double fx = w / cs + 1.0, fy = ht / cs + 1.0;
-            if (fx * fy <= MaxCells) { cx = (int)fx; cy = (int)fy; break; }
-            cs *= 1.5f;
-        }
-        effectiveCell = cs; invCell = 1f / cs; gridMin = new Vector2(minX, minY);
-        cellsX = cx; cellsY = cy;
-
-        int total = cx * cy;
-        if (cellStart == null || cellStart.Length < total + 1)
-        {
-            int cap = Mathf.NextPowerOfTwo(total + 1);
-            cellStart = new int[cap];
-            cellFill = new int[cap];
-        }
-        else System.Array.Clear(cellStart, 0, total + 1);
-
-        for (int i = 0; i < n; i++)
-        {
-            Vector2 q = p[i];
-            if (!Finite(q)) { cellOf[i] = -1; continue; }
-            int gx = (int)((q.x - minX) * invCell);
-            int gy = (int)((q.y - minY) * invCell);
-            if (gx >= cx) gx = cx - 1;
-            if (gy >= cy) gy = cy - 1;
-            int c = gy * cx + gx;
-            cellOf[i] = c;
-            cellStart[c + 1]++;
-        }
-        for (int c = 0; c < total; c++) cellStart[c + 1] += cellStart[c];
-        System.Array.Copy(cellStart, cellFill, total);
-        for (int i = 0; i < n; i++)
-        {
-            int c = cellOf[i];
-            if (c >= 0) cellItems[cellFill[c]++] = i;
-        }
+        nActive[i] = 1; nX[i] = x; nV[i] = v;
+        return x.x < gridMinX || x.x >= gridMaxX || x.y < gridMinY || x.y >= gridMaxY;
     }
 
     // ================================================================== bookkeeping
@@ -539,39 +497,84 @@ public class PbfFluidLite : MonoBehaviour
         if (bodies != null && need <= bodies.Length) return;
         int cap = Mathf.Max(64, need, bodies == null ? 0 : bodies.Length * 2);
         System.Array.Resize(ref bodies, cap);
-        System.Array.Resize(ref typeOf, cap);
         System.Array.Resize(ref baseGs, cap);
         System.Array.Resize(ref appliedGs, cap);
-        System.Array.Resize(ref mass, cap);
-        System.Array.Resize(ref pred, cap);
-        System.Array.Resize(ref pos0, cap);
-        System.Array.Resize(ref vPred, cap);
-        System.Array.Resize(ref vCon, cap);
-        System.Array.Resize(ref vOut, cap);
-        System.Array.Resize(ref delta, cap);
-        System.Array.Resize(ref lambda, cap);
-        System.Array.Resize(ref rho0Arr, cap);
-        System.Array.Resize(ref stiffArr, cap);
-        System.Array.Resize(ref viscArr, cap);
-        System.Array.Resize(ref cellOf, cap);
-        System.Array.Resize(ref cellItems, cap);
         System.Array.Resize(ref forceBatch, cap);
+        Realloc(ref nMass, cap, count);        // registry data: keep contents
+        Realloc(ref nType, cap, count);
+        Realloc(ref nX, cap, 0);               // scratch: contents rewritten every step
+        Realloc(ref nV, cap, 0);
+        Realloc(ref nVPred, cap, 0);
+        Realloc(ref nPos0, cap, 0);
+        Realloc(ref nPredA, cap, 0);
+        Realloc(ref nPredB, cap, 0);
+        Realloc(ref nVCon, cap, 0);
+        Realloc(ref nForce, cap, 0);
+        Realloc(ref nGs, cap, 0);
+        Realloc(ref nLambda, cap, 0);
+        Realloc(ref nRatio, cap, 0);
+        Realloc(ref nActive, cap, 0);
+        Realloc(ref nCellOf, cap, 0);
+        Realloc(ref nCellItems, cap, 0);
     }
+
+    static void Realloc<T>(ref NativeArray<T> a, int cap, int keep) where T : struct
+    {
+        var n = new NativeArray<T>(cap, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+        if (a.IsCreated)
+        {
+            if (keep > 0) NativeArray<T>.Copy(a, n, keep);
+            a.Dispose();
+        }
+        a = n;
+    }
+
+    void EnsureGrid(int total)
+    {
+        if (nCellStart.IsCreated && nCellStart.Length == total + 1) return;
+        if (nCellStart.IsCreated) nCellStart.Dispose();
+        if (nCellFill.IsCreated) nCellFill.Dispose();
+        nCellStart = new NativeArray<int>(total + 1, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+        nCellFill = new NativeArray<int>(total + 1, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+    }
+
+    void EnsureTypeTable(int need)
+    {
+        if (nTypes.IsCreated && nTypes.Length >= need) return;
+        if (nTypes.IsCreated) nTypes.Dispose();
+        int cap = Mathf.Max(8, need);
+        nTypes = new NativeArray<PbfTypeParams>(cap, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+        typeGm = new float[cap];
+    }
+
+    void DisposeNative()
+    {
+        Dispose(ref nMass); Dispose(ref nType);
+        Dispose(ref nX); Dispose(ref nV); Dispose(ref nVPred); Dispose(ref nPos0);
+        Dispose(ref nPredA); Dispose(ref nPredB); Dispose(ref nVCon); Dispose(ref nForce);
+        Dispose(ref nGs); Dispose(ref nLambda); Dispose(ref nRatio); Dispose(ref nActive);
+        Dispose(ref nCellOf); Dispose(ref nCellItems); Dispose(ref nCellStart); Dispose(ref nCellFill);
+        Dispose(ref nTypes);
+    }
+    static void Dispose<T>(ref NativeArray<T> a) where T : struct { if (a.IsCreated) a.Dispose(); }
 
     void RemoveAt(int i, bool restoreGravity)
     {
         PhysicsBody b = bodies[i];
         if (restoreGravity && b.isValid) b.gravityScale = baseGs[i];
         indexOf.Remove(b);
+        massSum -= nMass[i];
         int last = count - 1;
         if (i != last)
         {
-            bodies[i] = bodies[last]; typeOf[i] = typeOf[last];
-            baseGs[i] = baseGs[last]; appliedGs[i] = appliedGs[last]; mass[i] = mass[last];
+            bodies[i] = bodies[last];
+            baseGs[i] = baseGs[last]; appliedGs[i] = appliedGs[last];
+            nMass[i] = nMass[last]; nType[i] = nType[last];
             indexOf[bodies[i]] = i;
         }
         bodies[last] = default;
         count--;
+        if (count == 0) massSum = 0f;
     }
 
     void PruneInvalid()
@@ -624,8 +627,7 @@ public class PbfFluidLite : MonoBehaviour
 
     // ================================================================== calibration
     // Sum of the poly6 kernel over a square lattice (self included) with the given spacing.
-    // Iterates integer lattice indices so the origin is ALWAYS a lattice point (the old float loop only
-    // did that when h was an exact multiple of the spacing).
+    // Iterates integer lattice indices so the origin is ALWAYS a lattice point.
     float CurrentLatticeSum(float h)
     {
         float sp = Mathf.Max(0.01f, referenceSpacing);
@@ -650,7 +652,7 @@ public class PbfFluidLite : MonoBehaviour
 
     float ApplyCalibrationToTypes()
     {
-        float rho0 = Mathf.Max(0.001f, referenceMass * CurrentLatticeSum(Mathf.Max(0.05f, smoothingRadius)));
+        float rho0 = Mathf.Max(0.001f, referenceMass * CurrentLatticeSum(EffectiveSmoothing));
         if (types == null || types.Count == 0) types = new List<FluidType>() { new FluidType() };
         foreach (var ft in types) if (ft != null) ft.restDensity = rho0 * ft.restDensityScale;
         return rho0;
@@ -659,19 +661,20 @@ public class PbfFluidLite : MonoBehaviour
     // ================================================================== gizmos
     void DrawGridLines()
     {
-        if (cellsX <= 0 || cellsY <= 0) return;
-        Vector2 min = gridMin;
-        Vector2 max = gridMin + new Vector2(cellsX * effectiveCell, cellsY * effectiveCell);
+        int cols = Mathf.Max(1, gridColumns), rows = Mathf.Max(1, gridRows);
+        float cs = EffectiveSmoothing;
+        Vector2 min = gridOrigin;
+        Vector2 max = gridOrigin + new Vector2(cols * cs, rows * cs);
         Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.9f);
         Gizmos.DrawLine(new Vector3(min.x, min.y, 0f), new Vector3(max.x, min.y, 0f));
         Gizmos.DrawLine(new Vector3(max.x, min.y, 0f), new Vector3(max.x, max.y, 0f));
         Gizmos.DrawLine(new Vector3(max.x, max.y, 0f), new Vector3(min.x, max.y, 0f));
         Gizmos.DrawLine(new Vector3(min.x, max.y, 0f), new Vector3(min.x, min.y, 0f));
         Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.35f);
-        for (int i = 1; i < cellsX && i < 200; i++)
-        { float x = min.x + i * effectiveCell; Gizmos.DrawLine(new Vector3(x, min.y, 0f), new Vector3(x, max.y, 0f)); }
-        for (int i = 1; i < cellsY && i < 200; i++)
-        { float y = min.y + i * effectiveCell; Gizmos.DrawLine(new Vector3(min.x, y, 0f), new Vector3(max.x, y, 0f)); }
+        for (int i = 1; i < cols && i < 200; i++)
+        { float x = min.x + i * cs; Gizmos.DrawLine(new Vector3(x, min.y, 0f), new Vector3(x, max.y, 0f)); }
+        for (int i = 1; i < rows && i < 200; i++)
+        { float y = min.y + i * cs; Gizmos.DrawLine(new Vector3(min.x, y, 0f), new Vector3(max.x, y, 0f)); }
     }
     void OnDrawGizmos() { if (!showGridGizmo || !drawGridWhenUnselected) return; DrawGridLines(); }
     void OnDrawGizmosSelected() { if (!showGridGizmo) return; DrawGridLines(); }
