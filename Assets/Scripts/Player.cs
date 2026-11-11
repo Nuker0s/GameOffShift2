@@ -3,7 +3,7 @@ using UnityEngine;
 using Unity.U2D.Physics;
 using System;
 using Unity.VisualScripting;
-/*public class Player : MonoBehaviour
+public class Player : MonoBehaviour
 {
     public PbfFluidLite sim;
     public PhysicsPose body;
@@ -117,4 +117,3 @@ using Unity.VisualScripting;
         }
     }
 }
-*/

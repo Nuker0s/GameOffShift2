@@ -47,7 +47,7 @@ MonoBehaviour:
         m_InsightsSettingsContainer:
           m_BuildProfileEngineDiagnosticsState: 2
         m_AdaptivePerformanceEnabled: 0
-        m_CodeOptimization: 3
+        m_CodeOptimization: 0
         m_WebGLClientBrowserPath: 
         m_WebGLClientBrowserType: 0
         m_WebGLTextureSubtarget: 1
@@ -392,7 +392,10 @@ BuildProfilePlayerSettings:
   m_BuildTargetGroupLightmapSettings: []
   m_BuildTargetGroupLoadStoreDebugModeSettings: []
   m_BuildTargetNormalMapEncoding: []
-  m_BuildTargetDefaultTextureCompressionFormat: []
+  m_BuildTargetDefaultTextureCompressionFormat:
+  - serializedVersion: 3
+    m_BuildTarget: WebGL
+    m_Formats: 05000000i
   playModeTestRunnerEnabled: 0
   runPlayModeTestAsEditModeTest: 0
   actionOnDotNetUnhandledException: 1

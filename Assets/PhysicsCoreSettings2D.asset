@@ -404,6 +404,6 @@ MonoBehaviour:
   m_InitialWorldCapacity: 4
   m_ConcurrentSimulations: 2
   m_LengthUnitsPerMeter: 1
-  m_RenderingMode: 0
+  m_RenderingMode: 2
   m_DisableSimulation: 0
   m_AlwaysDrawWorlds: 1
