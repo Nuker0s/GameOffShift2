@@ -7,6 +7,7 @@ public class PIR : MonoBehaviour
     public PlayerInput playerInput;
     public static PIR instance;
     public InputAction move;
+    public InputAction stateChange;
 
     void Awake()
     {
@@ -17,6 +18,7 @@ public class PIR : MonoBehaviour
     void Start()
     {
         move = playerInput.actions["Move"];
+        stateChange = playerInput.actions["Interact"];
     }
 
     // Update is called once per frame
