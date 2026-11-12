@@ -299,106 +299,196 @@ public class Player : MonoBehaviour
     // ---------------------------------------------------------
 
     private List<Vector2>[] GenerateVoronoiCells(List<Vector2> sites)
+{
+    int count = sites.Count;
+
+    float averageNearestDistance = 0f;
+
+    for (int i = 0; i < count; i++)
     {
-        int count = sites.Count;
+        float nearest = float.MaxValue;
 
-        Vector2 center = Vector2.zero;
-
-        foreach (Vector2 point in sites)
-            center += point;
-
-        center /= count;
-
-        float maxRadius = 0f;
-        float averageNearestDistance = 0f;
-
-        for (int i = 0; i < count; i++)
+        for (int j = 0; j < count; j++)
         {
-            maxRadius = Mathf.Max(
-                maxRadius,
-                Vector2.Distance(center, sites[i])
-            );
+            if (i == j)
+                continue;
 
-            float nearest = float.MaxValue;
+            float distance = Vector2.Distance(sites[i], sites[j]);
 
-            for (int j = 0; j < count; j++)
+            if (distance < 0.0001f)
             {
-                if (i == j)
-                    continue;
-
-                float distance = Vector2.Distance(sites[i], sites[j]);
-
-                if (distance < 0.0001f)
-                {
-                    Debug.LogWarning(
-                        "[Player] Duplicate particle positions detected."
-                    );
-                    return null;
-                }
-
-                nearest = Mathf.Min(nearest, distance);
+                Debug.LogWarning("[Player] Duplicate particle positions detected.");
+                return null;
             }
 
-            averageNearestDistance += nearest;
+            nearest = Mathf.Min(nearest, distance);
         }
 
-        averageNearestDistance /= count;
+        averageNearestDistance += nearest;
+    }
 
-        float padding = Mathf.Max(
-            boundaryPadding,
-            averageNearestDistance * 0.8f
-        );
+    averageNearestDistance /= count;
 
-        float radius = maxRadius + padding;
+    float padding = Mathf.Max(
+        boundaryPadding,
+        averageNearestDistance * 0.8f
+    );
 
-        // Shared convex boundary.
-        List<Vector2> boundary = new List<Vector2>();
+    // Generate a convex hull around the actual particle positions.
+    List<Vector2> boundary = GenerateConvexHull(sites);
 
-        for (int i = 0; i < boundarySegments; i++)
+    if (boundary.Count < 3)
+        return null;
+
+    // Expand the hull outwards.
+    boundary = ExpandConvexPolygon(boundary, padding);
+
+    List<Vector2>[] result = new List<Vector2>[count];
+
+    // Clip the boundary against every other particle's Voronoi half-plane.
+    for (int i = 0; i < count; i++)
+    {
+        List<Vector2> polygon = new List<Vector2>(boundary);
+
+        for (int j = 0; j < count; j++)
         {
-            float angle = i * Mathf.PI * 2f / boundarySegments;
+            if (i == j)
+                continue;
 
-            boundary.Add(center + new Vector2(
-                Mathf.Cos(angle),
-                Mathf.Sin(angle)
-            ) * radius);
-        }
+            Vector2 normal = sites[j] - sites[i];
 
-        List<Vector2>[] result = new List<Vector2>[count];
+            float offset =
+                (sites[j].sqrMagnitude - sites[i].sqrMagnitude) * 0.5f;
 
-        // Clip the shared boundary against every other particle's
-        // Voronoi half-plane.
-        for (int i = 0; i < count; i++)
-        {
-            List<Vector2> polygon = new List<Vector2>(boundary);
-
-            for (int j = 0; j < count; j++)
-            {
-                if (i == j)
-                    continue;
-
-                Vector2 normal = sites[j] - sites[i];
-
-                float offset =
-                    (sites[j].sqrMagnitude - sites[i].sqrMagnitude) * 0.5f;
-
-                polygon = ClipPolygon(polygon, normal, offset);
-
-                if (polygon.Count < 3)
-                    return null;
-            }
-
-            // Physics Core 2D polygons have a maximum vertex count.
-            SimplifyPolygon(polygon, PhysicsConstants.MaxPolygonVertices);
+            polygon = ClipPolygon(polygon, normal, offset);
 
             if (polygon.Count < 3)
                 return null;
-
-            result[i] = polygon;
         }
 
-        return result;
+        SimplifyPolygon(polygon, PhysicsConstants.MaxPolygonVertices);
+
+        if (polygon.Count < 3)
+            return null;
+
+        result[i] = polygon;
     }
+
+    return result;
+}
+private List<Vector2> ExpandConvexPolygon(
+    List<Vector2> polygon,
+    float padding)
+{
+    List<Vector2> expanded = new List<Vector2>();
+
+    int count = polygon.Count;
+
+    for (int i = 0; i < count; i++)
+    {
+        Vector2 previous = polygon[(i - 1 + count) % count];
+        Vector2 current = polygon[i];
+        Vector2 next = polygon[(i + 1) % count];
+
+        Vector2 previousEdge = (current - previous).normalized;
+        Vector2 nextEdge = (next - current).normalized;
+
+        // Outward normals for a counterclockwise polygon.
+        Vector2 previousNormal = new Vector2(
+            previousEdge.y,
+            -previousEdge.x
+        );
+
+        Vector2 nextNormal = new Vector2(
+            nextEdge.y,
+            -nextEdge.x
+        );
+
+        Vector2 previousPoint = current + previousNormal * padding;
+        Vector2 nextPoint = current + nextNormal * padding;
+
+        float denominator = Cross(previousEdge, nextEdge);
+
+        if (Mathf.Abs(denominator) < 0.00001f)
+        {
+            Vector2 normal = (previousNormal + nextNormal).normalized;
+
+            expanded.Add(current + normal * padding);
+            continue;
+        }
+
+        float t = Cross(
+            nextPoint - previousPoint,
+            nextEdge
+        ) / denominator;
+
+        Vector2 intersection = previousPoint + previousEdge * t;
+
+        expanded.Add(intersection);
+    }
+
+    return expanded;
+}
+private List<Vector2> GenerateConvexHull(List<Vector2> points)
+{
+    List<Vector2> sorted = new List<Vector2>(points);
+
+    sorted.Sort((a, b) =>
+    {
+        int comparison = a.x.CompareTo(b.x);
+
+        if (comparison == 0)
+            comparison = a.y.CompareTo(b.y);
+
+        return comparison;
+    });
+
+    List<Vector2> hull = new List<Vector2>();
+
+    // Lower hull.
+    foreach (Vector2 point in sorted)
+    {
+        while (hull.Count >= 2 &&
+            Cross(
+                hull[hull.Count - 1] - hull[hull.Count - 2],
+                point - hull[hull.Count - 1]
+            ) <= 0f)
+        {
+            hull.RemoveAt(hull.Count - 1);
+        }
+
+        hull.Add(point);
+    }
+
+    // Upper hull.
+    int lowerCount = hull.Count;
+
+    for (int i = sorted.Count - 2; i >= 0; i--)
+    {
+        Vector2 point = sorted[i];
+
+        while (hull.Count > lowerCount &&
+            Cross(
+                hull[hull.Count - 1] - hull[hull.Count - 2],
+                point - hull[hull.Count - 1]
+            ) <= 0f)
+        {
+            hull.RemoveAt(hull.Count - 1);
+        }
+
+        hull.Add(point);
+    }
+
+    if (hull.Count > 1)
+        hull.RemoveAt(hull.Count - 1);
+
+    return hull;
+}
+
+private float Cross(Vector2 a, Vector2 b)
+{
+    return a.x * b.y - a.y * b.x;
+}
 
     // Sutherland-Hodgman half-plane clipping.
     // Keeps points satisfying dot(point, normal) <= offset.
