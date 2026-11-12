@@ -1243,7 +1243,7 @@ Transform:
   m_GameObject: {fileID: 599392183}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 64, y: 13.1798, z: 0}
+  m_LocalPosition: {x: 20.2, y: 13.1798, z: 0}
   m_LocalScale: {x: 1, y: 50, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1703,9 +1703,9 @@ MonoBehaviour:
   smoothingFromSpacing: 1
   smoothingToSpacing: 2
   smoothingRadius: 1.5
-  gridOrigin: {x: -47.1, y: -31.6}
-  gridColumns: 127
-  gridRows: 90
+  gridOrigin: {x: -47.1, y: -32.7}
+  gridColumns: 78
+  gridRows: 54
   showGridGizmo: 1
   drawGridWhenUnselected: 1
   iterations: 1
@@ -1720,13 +1720,13 @@ MonoBehaviour:
   jobBatchSize: 32
   types:
   - name: Water
-    restDensity: 2.5066903
+    restDensity: 0.94115317
     restDensityScale: 1
     stiffness: 0.5
     viscosity: 0.2
     gravityMultiplier: 1
   - name: Oil
-    restDensity: 1.8800178
+    restDensity: 0.7058649
     restDensityScale: 0.75
     stiffness: 1
     viscosity: 0.6
@@ -1736,15 +1736,15 @@ MonoBehaviour:
   autoSyncSource: []
   autoSyncEveryFixedUpdate: 0
   autoCalibrate: 1
-  referenceSpacing: 0.9
-  referenceMass: 0.1
+  referenceSpacing: 0.51
+  referenceMass: 0.2
   showParticlesViaPhysicsDraw: 1
   showLogs: 0
   updateDiagnostics: 1
-  diagAvgDensityRatio: 1.0383236
-  diagCompressed: 675
+  diagAvgDensityRatio: 1.2223474
+  diagCompressed: 2742
   diagOutsideGrid: 0
-  diagStepMs: 6.2941
+  diagStepMs: 1.6147
   metaballPlaneRenderer: {fileID: 1836580605}
   metaballMaterialOverride: {fileID: 2100000, guid: aeaa802174194684886953f820cc25ff, type: 2}
   metaballBufferInitialCapacity: 512
@@ -1785,10 +1785,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PbfFluidSpawner
   sim: {fileID: 936009783}
-  spawnOrigin: {x: -10.33, y: -27.16}
+  spawnOrigin: {x: -9.37, y: -26.9}
   spacing: 0.51
   layoutByArea: 1
-  areaSize: {x: 65.8, y: 35.8}
+  areaSize: {x: 20.9, y: 34.1}
   rows: 28
   cols: 34
   jitter: 0.02
@@ -1808,7 +1808,7 @@ MonoBehaviour:
   spawnTypeId: 0
   spawnOnStart: 1
   clearBeforeSpawn: 1
-  calibrateSimOnSpawn: 1
+  calibrateSimOnSpawn: 0
   showLogs: 1
   showSpawnGizmo: 1
 --- !u!1 &1005268990
