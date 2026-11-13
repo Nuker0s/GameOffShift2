@@ -153,9 +153,12 @@ public class Player : MonoBehaviour
             return;
         }
 
-        if (state != State.Liquid || particles.Count == 0)
-            return;
+        if (state == State.Liquid || !(particles.Count == 0)) LiquidMovement();
 
+        
+    }
+    void LiquidMovement()
+    {
         Vector2 center = Vector2.zero;
         int validCount = 0;
 
