@@ -1731,6 +1731,18 @@ MonoBehaviour:
     stiffness: 1
     viscosity: 0.6
     gravityMultiplier: 1
+  - name: PlayerFluid
+    restDensity: 0.7058649
+    restDensityScale: 0.75
+    stiffness: 1
+    viscosity: 0.6
+    gravityMultiplier: 1
+  - name: PlayerGas
+    restDensity: 0.7058649
+    restDensityScale: 0.75
+    stiffness: 1
+    viscosity: 0.6
+    gravityMultiplier: -1
   defaultType: 1
   manualPoses: []
   autoSyncSource: []
@@ -2989,10 +3001,7 @@ MonoBehaviour:
   spiralCenter: {x: 0, y: 0}
   useTransformAsCenter: 1
   spiralSpacing: 0.25
-  boundarySegments: 8
   boundaryPadding: 0.25
-  jointFrequency: 0
-  jointDamping: 1
   liquidBaseForce: 3
   baseOffset: {x: 0, y: 0.5}
   moveForce: 0.5

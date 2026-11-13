@@ -219,6 +219,6 @@ public class Player : MonoBehaviour
     }
     void OnDrawGizmos()
     {
-        if(solidifiedBody!= null) Gizmos.DrawCube(solidifiedBody.position,Vector3.one*0.3f);
+        if (Application.isPlaying == true) if(solidifiedBody!= null) Gizmos.DrawCube(solidifiedBody.position,Vector3.one*0.3f);
     }
 }
