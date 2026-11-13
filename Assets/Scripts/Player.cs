@@ -133,6 +133,7 @@ public class Player : MonoBehaviour
         for (int i = 0; i < particles.Count; i++)
         {
             PhysicsBody particle = particles[i];
+            //particle.constraints = PhysicsBody.BodyConstraints.None;
 
             if (!particle.isValid)
                 continue;
@@ -716,8 +717,8 @@ private float Cross(Vector2 a, Vector2 b)
 
     void FixedUpdate()
     {
-        if (state != State.Liquid || particles.Count == 0)
-            return;
+        //if (state != State.Liquid || particles.Count == 0)
+          //  return;
 
         Vector2 center = Vector2.zero;
         int validCount = 0;

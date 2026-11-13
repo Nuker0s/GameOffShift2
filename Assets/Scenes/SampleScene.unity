@@ -2794,8 +2794,8 @@ Transform:
   m_GameObject: {fileID: 1398099616}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 4.73912, y: -7.7402, z: 0}
-  m_LocalScale: {x: 131.6, y: 1, z: 1}
+  m_LocalPosition: {x: 4.73912, y: -10, z: 0}
+  m_LocalScale: {x: 131.6, y: 5.4, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1264070959}
@@ -2989,6 +2989,10 @@ MonoBehaviour:
   spiralCenter: {x: 0, y: 0}
   useTransformAsCenter: 1
   spiralSpacing: 0.25
+  boundarySegments: 8
+  boundaryPadding: 0.25
+  jointFrequency: 0
+  jointDamping: 1
   liquidBaseForce: 3
   baseOffset: {x: 0, y: 0.5}
   moveForce: 0.5
@@ -3026,6 +3030,16 @@ MonoBehaviour:
     m_Type: 0
     m_ExpectedControlType: 
     m_Id: d0d886e7-5b24-445a-8f7a-9af427a4da93
+    m_Processors: 
+    m_Interactions: 
+    m_SingletonActionBindings: []
+    m_Flags: 0
+    m_Priority: 0
+  stateChange:
+    m_Name: State Change
+    m_Type: 0
+    m_ExpectedControlType: 
+    m_Id: 30fdf848-3a50-43e0-830b-732d067017f1
     m_Processors: 
     m_Interactions: 
     m_SingletonActionBindings: []
