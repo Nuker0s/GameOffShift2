@@ -217,4 +217,8 @@ public class Player : MonoBehaviour
         if (solidifiedBody.isValid)
             ParticleSolidifier.DestroySolidifiedBody(solidifiedBody);
     }
+    void OnDrawGizmos()
+    {
+        if(solidifiedBody!= null) Gizmos.DrawCube(solidifiedBody.position,Vector3.one*0.3f);
+    }
 }

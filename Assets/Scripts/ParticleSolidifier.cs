@@ -28,6 +28,11 @@ public sealed class ParticleSolidifierSnapshot : ScriptableObject
     // Fluid-solver registration to restore when the particle is recreated.
     public PbfFluidLite simulation;
     public int fluidTypeId;
+
+    // Mass/density overrides (see PbfFluidSpawner: mass applied via body.mass
+    // after creation, density via PhysicsShapeDefinition.density).
+    public float mass;
+    public float density;
 }
 
 /// <summary>
@@ -52,6 +57,8 @@ public static class ParticleSolidifier
         public UnityEngine.Object shapeCallbackTarget;
         public UnityEngine.Object bodyCallbackTarget;
         public int fluidTypeId;
+        public float mass;
+        public float density;
     }
 
     /// <summary>
@@ -163,6 +170,11 @@ public static class ParticleSolidifier
                 ? simulation.GetParticleType(particle)
                 : -1;
 
+            // Mirror PbfFluidSpawner: mass lives on the body (body.mass),
+            // density lives on the shape definition.
+            input.mass = input.body.mass;
+            input.density = input.shapeDefinition.density;
+
             inputs.Add(input);
         }
 
@@ -261,6 +273,8 @@ public static class ParticleSolidifier
                 snapshot.bodyCallbackTarget = input.bodyCallbackTarget;
                 snapshot.simulation = simulation;
                 snapshot.fluidTypeId = input.fluidTypeId;
+                snapshot.mass = input.mass;
+                snapshot.density = input.density;
 
                 snapshots.Add(snapshot);
 
@@ -386,9 +400,15 @@ public static class ParticleSolidifier
                 particle.userData = snapshot.bodyUserData;
                 particle.callbackTarget = snapshot.bodyCallbackTarget;
 
+                // Restore density via the shape definition and mass via body.mass,
+                // mirroring PbfFluidSpawner.SpawnOneInternal.
+                PhysicsShapeDefinition shapeDefinition = snapshot.shapeDefinition;
+                if (snapshot.density > 1e-6f)
+                    shapeDefinition.density = snapshot.density;
+
                 PhysicsShape particleShape = particle.CreateShape(
                     snapshot.circleGeometry,
-                    snapshot.shapeDefinition);
+                    shapeDefinition);
 
                 if (!particleShape.isValid)
                 {
@@ -398,6 +418,10 @@ public static class ParticleSolidifier
 
                 particleShape.userData = snapshot.shapeUserData;
                 particleShape.callbackTarget = snapshot.shapeCallbackTarget;
+
+                if (snapshot.mass > 1e-6f)
+                    particle.mass = snapshot.mass;
+
                 particles.Add(particle);
 
                 if (snapshot.simulation != null)
