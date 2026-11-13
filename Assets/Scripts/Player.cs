@@ -46,6 +46,9 @@ public class Player : MonoBehaviour
         if (spawner == null)
             spawner = FindFirstObjectByType<PbfFluidSpawner>();
 
+        if (sim == null)
+            sim = FindFirstObjectByType<PbfFluidLite>();
+
         if (spawner == null)
         {
             Debug.LogWarning("[Player] No PbfFluidSpawner found.");
@@ -104,7 +107,7 @@ public class Player : MonoBehaviour
         if (state == State.Solid || particles.Count < 3)
             return;
 
-        PhysicsBody result = ParticleSolidifier.Solidify(particles, boundaryPadding);
+        PhysicsBody result = ParticleSolidifier.Solidify(particles, sim, boundaryPadding);
 
         if (!result.isValid)
             return;

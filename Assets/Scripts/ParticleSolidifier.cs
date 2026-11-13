@@ -24,6 +24,10 @@ public sealed class ParticleSolidifierSnapshot : ScriptableObject
     public PhysicsUserData bodyUserData;
     public UnityEngine.Object shapeCallbackTarget;
     public UnityEngine.Object bodyCallbackTarget;
+
+    // Fluid-solver registration to restore when the particle is recreated.
+    public PbfFluidLite simulation;
+    public int fluidTypeId;
 }
 
 /// <summary>
@@ -47,6 +51,7 @@ public static class ParticleSolidifier
         public PhysicsUserData bodyUserData;
         public UnityEngine.Object shapeCallbackTarget;
         public UnityEngine.Object bodyCallbackTarget;
+        public int fluidTypeId;
     }
 
     /// <summary>
@@ -61,6 +66,30 @@ public static class ParticleSolidifier
         List<PhysicsBody> particles,
         float boundaryPadding = 0.25f,
         PhysicsBodyDefinition? solidBodyDefinition = null)
+    {
+        return SolidifyInternal(particles, boundaryPadding, solidBodyDefinition, null);
+    }
+
+    /// <summary>
+    /// Solidifies particles and removes them from the supplied PBF simulation.
+    /// The simulation and each particle's fluid type are stored with the shape
+    /// snapshots, so Liquify(solidifiedBody) automatically registers the
+    /// recreated particles again.
+    /// </summary>
+    public static PhysicsBody Solidify(
+        List<PhysicsBody> particles,
+        PbfFluidLite simulation,
+        float boundaryPadding = 0.25f,
+        PhysicsBodyDefinition? solidBodyDefinition = null)
+    {
+        return SolidifyInternal(particles, boundaryPadding, solidBodyDefinition, simulation);
+    }
+
+    private static PhysicsBody SolidifyInternal(
+        List<PhysicsBody> particles,
+        float boundaryPadding,
+        PhysicsBodyDefinition? solidBodyDefinition,
+        PbfFluidLite simulation)
     {
         if (particles == null || particles.Count < 3)
         {
@@ -129,6 +158,10 @@ public static class ParticleSolidifier
                 input.shapeUserData = shape.userData;
                 //input.shapeCallbackTarget = shape.callbackTarget;
             }
+
+            input.fluidTypeId = simulation != null
+                ? simulation.GetParticleType(particle)
+                : -1;
 
             inputs.Add(input);
         }
@@ -226,6 +259,8 @@ public static class ParticleSolidifier
                 snapshot.bodyUserData = input.bodyUserData;
                 snapshot.shapeCallbackTarget = input.shapeCallbackTarget;
                 snapshot.bodyCallbackTarget = input.bodyCallbackTarget;
+                snapshot.simulation = simulation;
+                snapshot.fluidTypeId = input.fluidTypeId;
 
                 snapshots.Add(snapshot);
 
@@ -250,6 +285,9 @@ public static class ParticleSolidifier
             // Only destroy source bodies after the replacement body is complete.
             for (int i = 0; i < inputs.Count; i++)
             {
+                if (simulation != null)
+                    simulation.RemoveParticle(inputs[i].body);
+
                 if (!inputs[i].body.Destroy())
                     throw new InvalidOperationException("Failed to destroy source particle body " + i + ".");
             }
@@ -260,6 +298,17 @@ public static class ParticleSolidifier
 
             if (solidBody.isValid)
                 solidBody.Destroy();
+
+            // A failure before all source bodies were destroyed must not leave
+            // surviving particles missing from the fluid solver.
+            if (simulation != null)
+            {
+                for (int i = 0; i < inputs.Count; i++)
+                {
+                    if (inputs[i].body.isValid)
+                        simulation.AddParticle(inputs[i].body, inputs[i].fluidTypeId);
+                }
+            }
 
             // Also destroys snapshots that may not have been attached yet
             // if shape creation failed partway through the loop.
@@ -350,6 +399,9 @@ public static class ParticleSolidifier
                 particleShape.userData = snapshot.shapeUserData;
                 particleShape.callbackTarget = snapshot.shapeCallbackTarget;
                 particles.Add(particle);
+
+                if (snapshot.simulation != null)
+                    snapshot.simulation.AddParticle(particle, snapshot.fluidTypeId);
             }
         }
         catch (Exception exception)
@@ -358,6 +410,9 @@ public static class ParticleSolidifier
 
             for (int i = 0; i < particles.Count; i++)
             {
+                if (i < snapshots.Count && snapshots[i].simulation != null)
+                    snapshots[i].simulation.RemoveParticle(particles[i]);
+
                 if (particles[i].isValid)
                     particles[i].Destroy();
             }
