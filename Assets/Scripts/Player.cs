@@ -107,7 +107,20 @@ public class Player : MonoBehaviour
         if (state == State.Solid || particles.Count < 3)
             return;
 
-        List<PhysicsBody> results = ParticleSolidifier.Solidify(particles, sim, boundaryPadding);
+        List<PhysicsBody> results = ParticleSolidifier.Solidify(particles, sim, 1f,boundaryPadding);
+        if (results == null || results.Count == 0)
+            return;
+
+        PhysicsBody result = results[0];
+        int numberofshapes = result.shapeCount;
+        for (int i = 1; i < results.Count; i++)
+        {
+            if (results[i].shapeCount > numberofshapes)
+            {
+                result = results[i];
+                numberofshapes = result.shapeCount;
+            }
+        }
 
         if (!result.isValid)
             return;
@@ -193,6 +206,20 @@ public class Player : MonoBehaviour
 
             particle.ApplyForce(force, particle.worldCenterOfMass);
         }
+        
+        List<List<PhysicsBody>> results = ParticleBlobPartitioner.PartitionBlobs(particles.ToArray(),1);
+
+        List<PhysicsBody> result = results[0];
+        int numberofshapes = result.Count;
+        for (int i = 1; i < results.Count; i++)
+        {
+            if (results[i].Count > numberofshapes)
+            {
+                result = results[i];
+                numberofshapes = result.Count;
+            }
+        }
+        particles = result;
     }
 
     private void ApplySolidMovement()
