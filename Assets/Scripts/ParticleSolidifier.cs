@@ -22,27 +22,42 @@ public sealed class ParticleSolidifierSnapshot : ScriptableObject
     // Preserve custom data and callback targets that belonged to the source.
     public PhysicsUserData shapeUserData;
     public PhysicsUserData bodyUserData;
-    public UnityEngine.Object shapeCallbackTarget;
-    public UnityEngine.Object bodyCallbackTarget;
+    public object shapeCallbackTarget;
+    public object bodyCallbackTarget;
 
     // Fluid-solver registration to restore when the particle is recreated.
     public PbfFluidLite simulation;
     public int fluidTypeId;
 
-    // Mass/density overrides (see PbfFluidSpawner: mass applied via body.mass
-    // after creation, density via PhysicsShapeDefinition.density).
+    // Mass/density overrides.
     public float mass;
     public float density;
 }
 
 /// <summary>
+/// Body-level snapshot manifest. It is required because a particle whose cell
+/// is completely removed by terrain has no output shape on which to store its
+/// snapshot. Every original particle snapshot is stored here, including those
+/// which produce zero resulting physics shapes.
+/// </summary>
+public sealed class ParticleSolidifierManifest : ScriptableObject
+{
+    public List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>();
+}
+
+/// <summary>
 /// Converts a collection of individual circular particle bodies into one
-/// compound PhysicsBody containing one Voronoi polygon shape per particle.
-/// Liquify reconstructs the original particle bodies from data stored on
-/// those polygon shapes.
+/// compound PhysicsBody. Each particle's Voronoi cell can become multiple
+/// convex polygon shapes after terrain subtraction. All shapes belonging to
+/// one particle share the same ParticleSolidifierSnapshot.
+///
+/// ParticleBlobPartitioner is intentionally kept as the existing external
+/// helper used by this project.
 /// </summary>
 public static class ParticleSolidifier
 {
+    private const float TerrainCurveStride = 0.06f;
+
     private sealed class ParticleInput
     {
         public PhysicsBody body;
@@ -54,51 +69,63 @@ public static class ParticleSolidifier
         public PhysicsRotate rotation;
         public PhysicsUserData shapeUserData;
         public PhysicsUserData bodyUserData;
-        public UnityEngine.Object shapeCallbackTarget;
-        public UnityEngine.Object bodyCallbackTarget;
+        public object shapeCallbackTarget;
+        public object bodyCallbackTarget;
         public int fluidTypeId;
         public float mass;
         public float density;
     }
 
+    private sealed class CellGeometry
+    {
+        public readonly List<PolygonGeometry> polygons = new List<PolygonGeometry>();
+        public int islandCount;
+    }
+
     /// <summary>
     /// Partitions the supplied particles into proximity-connected blobs and
     /// solidifies each blob independently. Blobs with fewer than three valid
-    /// particles are skipped. The returned list contains one body per successful
-    /// blob solidification.
+    /// particles are skipped.
+    ///
+    /// terrainBodies is an explicit whitelist. Only shapes attached to these
+    /// bodies and in the source particle world can be subtracted. Pass null or
+    /// an empty list to retain the original no-terrain behaviour.
     /// </summary>
     public static List<PhysicsBody> Solidify(
         List<PhysicsBody> particles,
         float connectionDistance,
         float boundaryPadding = 0.25f,
-        PhysicsBodyDefinition? solidBodyDefinition = null)
+        PhysicsBodyDefinition? solidBodyDefinition = null,
+        List<PhysicsBody> terrainBodies = null)
     {
         return SolidifyGroupsInternal(
             particles != null ? particles.ToArray() : null,
             connectionDistance,
             boundaryPadding,
             solidBodyDefinition,
-            null);
+            null,
+            terrainBodies);
     }
 
     /// <summary>
-    /// Partitions and solidifies each blob independently, removing successfully
-    /// solidified particles from the supplied PBF simulation. Liquify restores
-    /// those particles to the simulation.
+    /// Same as Solidify, but also removes successfully solidified particles from
+    /// the supplied PBF simulation. Liquify restores them to that simulation.
     /// </summary>
     public static List<PhysicsBody> Solidify(
         List<PhysicsBody> particles,
         PbfFluidLite simulation,
         float connectionDistance,
         float boundaryPadding = 0.25f,
-        PhysicsBodyDefinition? solidBodyDefinition = null)
+        PhysicsBodyDefinition? solidBodyDefinition = null,
+        List<PhysicsBody> terrainBodies = null)
     {
         return SolidifyGroupsInternal(
             particles != null ? particles.ToArray() : null,
             connectionDistance,
             boundaryPadding,
             solidBodyDefinition,
-            simulation);
+            simulation,
+            terrainBodies);
     }
 
     private static List<PhysicsBody> SolidifyGroupsInternal(
@@ -106,11 +133,13 @@ public static class ParticleSolidifier
         float connectionDistance,
         float boundaryPadding,
         PhysicsBodyDefinition? solidBodyDefinition,
-        PbfFluidLite simulation)
+        PbfFluidLite simulation,
+        List<PhysicsBody> terrainBodies)
     {
         List<List<PhysicsBody>> blobs = ParticleBlobPartitioner.PartitionBlobs(
             particles,
             connectionDistance);
+
         List<PhysicsBody> solidifiedBodies = new List<PhysicsBody>(blobs.Count);
 
         for (int i = 0; i < blobs.Count; i++)
@@ -127,7 +156,8 @@ public static class ParticleSolidifier
                 blobs[i],
                 boundaryPadding,
                 solidBodyDefinition,
-                simulation);
+                simulation,
+                terrainBodies);
 
             if (solidBody.isValid)
                 solidifiedBodies.Add(solidBody);
@@ -137,14 +167,15 @@ public static class ParticleSolidifier
     }
 
     /// <summary>
-    /// Solidifies one already-partitioned blob. Each input body must have exactly
-    /// one circular shape. boundaryPadding expands the blob's Voronoi boundary.
+    /// Solidifies one already-partitioned blob. Each input body must have
+    /// exactly one circular shape.
     /// </summary>
     private static PhysicsBody SolidifyInternal(
         List<PhysicsBody> particles,
         float boundaryPadding,
         PhysicsBodyDefinition? solidBodyDefinition,
-        PbfFluidLite simulation)
+        PbfFluidLite simulation,
+        List<PhysicsBody> terrainBodies)
     {
         if (particles == null || particles.Count < 3)
         {
@@ -187,7 +218,7 @@ public static class ParticleSolidifier
             input.rotation = particle.rotation;
             input.bodyDefinition = particle.definition;
             input.bodyUserData = particle.userData;
-            //input.bodyCallbackTarget = particle.callbackTarget;
+            input.bodyCallbackTarget = particle.callbackTarget;
 
             using (NativeArray<PhysicsShape> shapes = particle.GetShapes())
             {
@@ -211,18 +242,15 @@ public static class ParticleSolidifier
                 input.circleGeometry = shape.circleGeometry;
                 input.shapeDefinition = shape.definition;
                 input.shapeUserData = shape.userData;
-                //input.shapeCallbackTarget = shape.callbackTarget;
+                input.shapeCallbackTarget = shape.callbackTarget;
             }
 
             input.fluidTypeId = simulation != null
                 ? simulation.GetParticleType(particle)
                 : -1;
 
-            // Mirror PbfFluidSpawner: mass lives on the body (body.mass),
-            // density lives on the shape definition.
-            input.mass = input.body.mass;
+            input.mass = particle.mass;
             input.density = input.shapeDefinition.density;
-
             inputs.Add(input);
         }
 
@@ -237,12 +265,15 @@ public static class ParticleSolidifier
         Vector2 averageVelocity = Vector2.zero;
         float averageAngularVelocity = 0f;
 
+        HashSet<PhysicsBody> sourceBodies = new HashSet<PhysicsBody>();
+
         for (int i = 0; i < inputs.Count; i++)
         {
             positions.Add(inputs[i].position);
             center += inputs[i].position;
             averageVelocity += inputs[i].body.linearVelocity;
             averageAngularVelocity += inputs[i].body.angularVelocity;
+            sourceBodies.Add(inputs[i].body);
         }
 
         center /= inputs.Count;
@@ -257,25 +288,51 @@ public static class ParticleSolidifier
             return default;
         }
 
-        // Validate every polygon before creating or destroying physics bodies.
-        List<PolygonGeometry> geometries = new List<PolygonGeometry>(cells.Length);
+        PhysicsTransform solidTransform = new PhysicsTransform(center, PhysicsRotate.identity);
+        HashSet<PhysicsBody> terrainBodySet = BuildTerrainBodySet(terrainBodies, world, sourceBodies);
+        HashSet<PhysicsShape> unsupportedShapesAlreadyReported = new HashSet<PhysicsShape>();
 
-        for (int i = 0; i < cells.Length; i++)
+        // Build and validate every cell's output geometry before creating or
+        // destroying any source body. A completely removed cell is represented
+        // by an empty polygon list; its particle is retained in the manifest.
+        CellGeometry[] cellGeometry = new CellGeometry[inputs.Count];
+        int totalOutputShapes = 0;
+        int totalIslands = 0;
+
+        try
         {
-            List<Vector2> localVertices = new List<Vector2>(cells[i].Count);
-
-            for (int vertexIndex = 0; vertexIndex < cells[i].Count; vertexIndex++)
-                localVertices.Add(cells[i][vertexIndex] - center);
-
-            PolygonGeometry geometry = PolygonGeometry.Create(localVertices.ToArray());
-
-            if (!geometry.isValid)
+            for (int i = 0; i < cells.Length; i++)
             {
-                Debug.LogWarning("[ParticleSolidifier] Invalid Voronoi polygon generated for particle " + i + ".");
-                return default;
-            }
+                List<Vector2> localVertices = new List<Vector2>(cells[i].Count);
 
-            geometries.Add(geometry);
+                for (int vertexIndex = 0; vertexIndex < cells[i].Count; vertexIndex++)
+                    localVertices.Add(cells[i][vertexIndex] - center);
+
+                PolygonGeometry baseGeometry = PolygonGeometry.Create(localVertices.ToArray());
+
+                if (!baseGeometry.isValid)
+                    throw new InvalidOperationException(
+                        "Invalid Voronoi polygon generated for particle " + i + ".");
+
+                CellGeometry generated = ComposeCellGeometry(
+                    world,
+                    cells[i],
+                    baseGeometry,
+                    solidTransform,
+                    terrainBodySet,
+                    sourceBodies,
+                    unsupportedShapesAlreadyReported);
+
+                cellGeometry[i] = generated;
+                totalOutputShapes += generated.polygons.Count;
+                totalIslands += generated.islandCount;
+            }
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError("[ParticleSolidifier] Terrain/Voronoi geometry generation failed. Source particles were left untouched.");
+            Debug.LogException(exception);
+            return default;
         }
 
         PhysicsBodyDefinition bodyDefinition = solidBodyDefinition.HasValue
@@ -287,18 +344,25 @@ public static class ParticleSolidifier
         bodyDefinition.linearVelocity = averageVelocity;
         bodyDefinition.angularVelocity = averageAngularVelocity;
 
-        PhysicsBody solidBody = world.CreateBody(bodyDefinition);
-
-        if (!solidBody.isValid)
-        {
-            Debug.LogError("[ParticleSolidifier] Failed to create the solidified body.");
-            return default;
-        }
-
+        PhysicsBody solidBody = default;
+        ParticleSolidifierManifest manifest = null;
         List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>(inputs.Count);
+        int createdShapeCount = 0;
 
         try
         {
+            solidBody = world.CreateBody(bodyDefinition);
+
+            if (!solidBody.isValid)
+                throw new InvalidOperationException("Failed to create the solidified body.");
+
+            manifest = ScriptableObject.CreateInstance<ParticleSolidifierManifest>();
+            manifest.hideFlags = HideFlags.HideAndDontSave;
+
+            PhysicsUserData compoundUserData = solidBody.userData;
+            compoundUserData.objectValue = manifest;
+            solidBody.userData = compoundUserData;
+
             // Keep the body-level callback target where possible. Per-shape
             // callback targets are retained individually in their snapshots.
             solidBody.callbackTarget = inputs[0].bodyCallbackTarget;
@@ -325,34 +389,40 @@ public static class ParticleSolidifier
                 snapshot.density = input.density;
 
                 snapshots.Add(snapshot);
+                manifest.snapshots.Add(snapshot);
 
                 PhysicsShapeDefinition polygonDefinition = input.shapeDefinition;
                 polygonDefinition.startMassUpdate = false;
 
-                PhysicsShape solidShape = solidBody.CreateShape(geometries[i], polygonDefinition);
+                // Every convex polygon fragment belonging to this original
+                // particle receives the same snapshot reference.
+                for (int polygonIndex = 0;
+                    polygonIndex < cellGeometry[i].polygons.Count;
+                    polygonIndex++)
+                {
+                    PhysicsShape solidShape = solidBody.CreateShape(
+                        cellGeometry[i].polygons[polygonIndex],
+                        polygonDefinition);
 
-                if (!solidShape.isValid)
-                    throw new InvalidOperationException("Failed to create polygon shape " + i + ".");
+                    if (!solidShape.isValid)
+                    {
+                        throw new InvalidOperationException(
+                            "Failed to create polygon shape " + polygonIndex +
+                            " for source particle " + i + ".");
+                    }
 
-                PhysicsUserData userData = solidShape.userData;
-                userData.objectValue = snapshot;
-                solidShape.userData = userData;
-                solidShape.callbackTarget = input.shapeCallbackTarget;
+                    PhysicsUserData shapeUserData = solidShape.userData;
+                    shapeUserData.objectValue = snapshot;
+                    solidShape.userData = shapeUserData;
+                    solidShape.callbackTarget = input.shapeCallbackTarget;
+                    createdShapeCount++;
+                }
             }
 
-            // All shapes were added with mass updates disabled, so calculate
-            // the compound body's mass properties once at the end.
-            solidBody.ApplyMassFromShapes();
-
-            // Only destroy source bodies after the replacement body is complete.
-            for (int i = 0; i < inputs.Count; i++)
-            {
-                if (simulation != null)
-                    simulation.RemoveParticle(inputs[i].body);
-
-                if (!inputs[i].body.Destroy())
-                    throw new InvalidOperationException("Failed to destroy source particle body " + i + ".");
-            }
+            // Skip mass recalculation for the edge case where terrain removed
+            // every cell. The empty body still acts as the snapshot holder.
+            if (createdShapeCount > 0)
+                solidBody.ApplyMassFromShapes();
         }
         catch (Exception exception)
         {
@@ -361,31 +431,353 @@ public static class ParticleSolidifier
             if (solidBody.isValid)
                 solidBody.Destroy();
 
-            // A failure before all source bodies were destroyed must not leave
-            // surviving particles missing from the fluid solver.
+            DestroySnapshots(snapshots);
+            DestroyManifest(manifest);
+            return default;
+        }
+
+        // Commit only after the full replacement body and every snapshot are
+        // complete. Remove registrations first, then destroy all source bodies
+        // in one PhysicsCore2D batch call.
+        List<int> removedFluidTypeIds = new List<int>(inputs.Count);
+        List<bool> removedFromSimulation = new List<bool>(inputs.Count);
+
+        try
+        {
+            for (int i = 0; i < inputs.Count; i++)
+            {
+                bool shouldRestoreRegistration = simulation != null;
+                removedFluidTypeIds.Add(inputs[i].fluidTypeId);
+                removedFromSimulation.Add(shouldRestoreRegistration);
+
+                if (shouldRestoreRegistration)
+                    simulation.RemoveParticle(inputs[i].body);
+            }
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception);
+
             if (simulation != null)
             {
                 for (int i = 0; i < inputs.Count; i++)
                 {
-                    if (inputs[i].body.isValid)
-                        simulation.AddParticle(inputs[i].body, inputs[i].fluidTypeId);
+                    if (i >= removedFromSimulation.Count || !removedFromSimulation[i] ||
+                        !inputs[i].body.isValid)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        simulation.AddParticle(inputs[i].body, removedFluidTypeIds[i]);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        Debug.LogException(rollbackException);
+                    }
                 }
             }
 
-            // Also destroys snapshots that may not have been attached yet
-            // if shape creation failed partway through the loop.
+            if (solidBody.isValid)
+                solidBody.Destroy();
+
             DestroySnapshots(snapshots);
+            DestroyManifest(manifest);
             return default;
         }
 
-        Debug.Log("[ParticleSolidifier] Solidified " + inputs.Count + " particles into one body.");
+        PhysicsBody[] sourceBodyArray = new PhysicsBody[inputs.Count];
+        for (int i = 0; i < inputs.Count; i++)
+            sourceBodyArray[i] = inputs[i].body;
+
+        PhysicsWorld.DestroyBodyBatch(sourceBodyArray);
+
+        Debug.Log(
+            "[ParticleSolidifier] Solidified " + inputs.Count +
+            " particles into one body using " + totalOutputShapes +
+            " convex shapes across " + totalIslands + " geometry islands.");
+
         return solidBody;
     }
 
+    private static HashSet<PhysicsBody> BuildTerrainBodySet(
+        List<PhysicsBody> terrainBodies,
+        PhysicsWorld particleWorld,
+        HashSet<PhysicsBody> sourceBodies)
+    {
+        HashSet<PhysicsBody> result = new HashSet<PhysicsBody>();
+
+        if (terrainBodies == null)
+            return result;
+
+        for (int i = 0; i < terrainBodies.Count; i++)
+        {
+            PhysicsBody terrainBody = terrainBodies[i];
+
+            if (!terrainBody.isValid)
+                continue;
+
+            if (!terrainBody.world.Equals(particleWorld))
+            {
+                Debug.LogWarning(
+                    "[ParticleSolidifier] Terrain body " + i +
+                    " belongs to a different PhysicsWorld and was ignored.");
+                continue;
+            }
+
+            // Even if accidentally supplied as terrain, source particle bodies
+            // are never considered subtraction geometry.
+            if (sourceBodies.Contains(terrainBody))
+                continue;
+
+            result.Add(terrainBody);
+        }
+
+        return result;
+    }
+
+    private static CellGeometry ComposeCellGeometry(
+        PhysicsWorld world,
+        List<Vector2> worldCellVertices,
+        PolygonGeometry baseGeometry,
+        PhysicsTransform solidTransform,
+        HashSet<PhysicsBody> terrainBodies,
+        HashSet<PhysicsBody> sourceBodies,
+        HashSet<PhysicsShape> unsupportedShapesAlreadyReported)
+    {
+        CellGeometry result = new CellGeometry();
+
+        if (terrainBodies.Count == 0)
+        {
+            result.polygons.Add(baseGeometry);
+            result.islandCount = 1;
+            return result;
+        }
+
+        PhysicsAABB cellAABB = CalculateWorldAABB(worldCellVertices);
+        List<PhysicsShape> terrainShapes = GetTerrainCandidates(
+            world,
+            cellAABB,
+            terrainBodies,
+            sourceBodies);
+
+        if (terrainShapes.Count == 0)
+        {
+            result.polygons.Add(baseGeometry);
+            result.islandCount = 1;
+            return result;
+        }
+
+        PhysicsComposer composer = PhysicsComposer.Create(Allocator.Temp);
+
+        try
+        {
+            if (!composer.isValid)
+                throw new InvalidOperationException("PhysicsComposer.Create returned an invalid composer.");
+
+            composer.maxPolygonVertices = PhysicsConstants.MaxPolygonVertices;
+
+            // The original cell is already expressed in prospective solid-body
+            // local space, so its composer transform is identity.
+            composer.AddLayer(
+                baseGeometry,
+                new PhysicsTransform(Vector2.zero, PhysicsRotate.identity),
+                PhysicsComposer.Operation.OR,
+                0);
+
+            int order = 1;
+
+            for (int i = 0; i < terrainShapes.Count; i++)
+            {
+                PhysicsShape terrainShape = terrainShapes[i];
+
+                if (!IsComposerSupportedTerrainShape(terrainShape))
+                {
+                    if (unsupportedShapesAlreadyReported.Add(terrainShape))
+                    {
+                        Debug.LogWarning(
+                            "[ParticleSolidifier] Terrain shape type " + terrainShape.shapeType +
+                            " is not supported by PhysicsComposer.AddLayer(PhysicsShape). " +
+                            "Only Circle, Capsule and Polygon shapes are subtracted. This terrain shape was skipped.");
+                    }
+
+                    continue;
+                }
+
+                // PhysicsShape.transform is the terrain body's world transform.
+                // Convert it into the local space of the body being created.
+                PhysicsTransform terrainLocalTransform =
+                    solidTransform.InverseMultiplyTransform(terrainShape.transform);
+
+                composer.AddLayer(
+                    terrainShape,
+                    terrainLocalTransform,
+                    PhysicsComposer.Operation.NOT,
+                    order,
+                    TerrainCurveStride);
+
+                order++;
+            }
+
+            NativeArray<PolygonGeometry> composedPolygons =
+                composer.CreatePolygonGeometry(Allocator.Temp);
+
+            try
+            {
+                NativeArray<RangeInt> islands = composer.GetGeometryIslands(Allocator.Temp);
+
+                try
+                {
+                    result.islandCount = islands.Length;
+
+                    if (composer.rejectedGeometryCount > 0)
+                    {
+                        throw new InvalidOperationException(
+                            "PhysicsComposer rejected " + composer.rejectedGeometryCount +
+                            " output geometry element(s). The cell was not solidified to avoid silently losing thin geometry.");
+                    }
+
+                    bool[] polygonAssignedToIsland = new bool[composedPolygons.Length];
+
+                    for (int islandIndex = 0; islandIndex < islands.Length; islandIndex++)
+                    {
+                        RangeInt island = islands[islandIndex];
+
+                        if (island.start < 0 || island.length < 0 ||
+                            island.start + island.length > composedPolygons.Length)
+                        {
+                            throw new InvalidOperationException(
+                                "PhysicsComposer returned an out-of-range geometry island.");
+                        }
+
+                        for (int islandOffset = 0; islandOffset < island.length; islandOffset++)
+                        {
+                            int polygonIndex = island.start + islandOffset;
+
+                            if (polygonAssignedToIsland[polygonIndex])
+                            {
+                                throw new InvalidOperationException(
+                                    "PhysicsComposer returned overlapping geometry island ranges.");
+                            }
+
+                            polygonAssignedToIsland[polygonIndex] = true;
+                            PolygonGeometry polygon = composedPolygons[polygonIndex];
+
+                            if (!polygon.isValid || polygon.count < 3 ||
+                                polygon.count > PhysicsConstants.MaxPolygonVertices)
+                            {
+                                throw new InvalidOperationException(
+                                    "PhysicsComposer returned an invalid convex polygon at index " + polygonIndex + ".");
+                            }
+
+                            // Retain polygons grouped by their returned island
+                            // ranges. Each polygon becomes an individual convex
+                            // PhysicsShape, while the source-particle snapshot
+                            // remains shared by all of them.
+                            result.polygons.Add(polygon);
+                        }
+                    }
+
+                    for (int polygonIndex = 0; polygonIndex < polygonAssignedToIsland.Length; polygonIndex++)
+                    {
+                        if (!polygonAssignedToIsland[polygonIndex])
+                        {
+                            throw new InvalidOperationException(
+                                "PhysicsComposer.GetGeometryIslands did not include output polygon " +
+                                polygonIndex + ".");
+                        }
+                    }
+                }
+                finally
+                {
+                    if (islands.IsCreated)
+                        islands.Dispose();
+                }
+            }
+            finally
+            {
+                if (composedPolygons.IsCreated)
+                    composedPolygons.Dispose();
+            }
+        }
+        finally
+        {
+            composer.Destroy();
+        }
+
+        return result;
+    }
+
+    private static bool IsComposerSupportedTerrainShape(PhysicsShape shape)
+    {
+        return shape.shapeType == PhysicsShape.ShapeType.Circle ||
+               shape.shapeType == PhysicsShape.ShapeType.Capsule ||
+               shape.shapeType == PhysicsShape.ShapeType.Polygon;
+    }
+
+    private static List<PhysicsShape> GetTerrainCandidates(
+        PhysicsWorld world,
+        PhysicsAABB worldAABB,
+        HashSet<PhysicsBody> terrainBodies,
+        HashSet<PhysicsBody> sourceBodies)
+    {
+        List<PhysicsShape> candidates = new List<PhysicsShape>();
+        HashSet<PhysicsShape> uniqueShapes = new HashSet<PhysicsShape>();
+
+        NativeArray<PhysicsQuery.WorldOverlapResult> overlaps = world.OverlapAABB(
+            worldAABB,
+            new PhysicsQuery.QueryFilter(),
+            Allocator.Temp);
+
+        try
+        {
+            for (int i = 0; i < overlaps.Length; i++)
+            {
+                if (!overlaps[i].isValid)
+                    continue;
+
+                PhysicsShape shape = overlaps[i].shape;
+
+                if (!shape.isValid || !shape.world.Equals(world))
+                    continue;
+
+                PhysicsBody shapeBody = shape.body;
+
+                if (!terrainBodies.Contains(shapeBody) || sourceBodies.Contains(shapeBody))
+                    continue;
+
+                if (uniqueShapes.Add(shape))
+                    candidates.Add(shape);
+            }
+        }
+        finally
+        {
+            if (overlaps.IsCreated)
+                overlaps.Dispose();
+        }
+
+        return candidates;
+    }
+
+    private static PhysicsAABB CalculateWorldAABB(List<Vector2> worldVertices)
+    {
+        Vector2 minimum = worldVertices[0];
+        Vector2 maximum = worldVertices[0];
+
+        for (int i = 1; i < worldVertices.Count; i++)
+        {
+            minimum = Vector2.Min(minimum, worldVertices[i]);
+            maximum = Vector2.Max(maximum, worldVertices[i]);
+        }
+
+        return new PhysicsAABB(minimum, maximum);
+    }
+
     /// <summary>
-    /// Recreates the original circular particle bodies from a solidified body.
-    /// Particle positions follow the solid body's current pose. Their linear
-    /// velocities are calculated from the solid body's velocity at each point.
+    /// Recreates every original circular particle exactly once, even when its
+    /// cell generated several convex shapes or no shapes at all. Newly created
+    /// particles follow the solid body's current pose and point velocity.
     /// </summary>
     public static List<PhysicsBody> Liquify(PhysicsBody solidifiedBody)
     {
@@ -397,32 +789,27 @@ public static class ParticleSolidifier
             return particles;
         }
 
-        List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>();
+        ParticleSolidifierManifest manifest;
+        bool manifestIncomplete;
+        List<ParticleSolidifierSnapshot> snapshots =
+            CollectSnapshots(solidifiedBody, out manifest, out manifestIncomplete);
 
-        using (NativeArray<PhysicsShape> shapes = solidifiedBody.GetShapes())
+        if (manifestIncomplete)
         {
-            if (shapes.Length == 0)
-            {
-                Debug.LogWarning("[ParticleSolidifier] The solidified body has no shapes.");
-                return particles;
-            }
-
-            for (int i = 0; i < shapes.Length; i++)
-            {
-                PhysicsUserData userData = shapes[i].userData;
-                ParticleSolidifierSnapshot snapshot = userData.objectValue as ParticleSolidifierSnapshot;
-
-                if (snapshot == null)
-                {
-                    Debug.LogError(
-                        "[ParticleSolidifier] Shape " + i + " has no particle snapshot. " +
-                        "The body was not destroyed.");
-                    return new List<PhysicsBody>();
-                }
-
-                snapshots.Add(snapshot);
-            }
+            Debug.LogError(
+                "[ParticleSolidifier] At least one particle snapshot referenced by the body manifest is missing. " +
+                "The body was retained because restoring it would silently lose an original particle.");
+            return particles;
         }
+
+        if (snapshots.Count == 0)
+        {
+            Debug.LogWarning(
+                "[ParticleSolidifier] No particle snapshots were found. The solidified body was not destroyed.");
+            return particles;
+        }
+
+        List<bool> registeredInSimulation = new List<bool>(snapshots.Count);
 
         try
         {
@@ -445,36 +832,40 @@ public static class ParticleSolidifier
                 if (!particle.isValid)
                     throw new InvalidOperationException("Failed to recreate particle body " + i + ".");
 
+                // Add it immediately so any subsequent failure is covered by
+                // the rollback path below.
+                particles.Add(particle);
+                registeredInSimulation.Add(false);
+
                 particle.userData = snapshot.bodyUserData;
                 particle.callbackTarget = snapshot.bodyCallbackTarget;
 
-                // Restore density via the shape definition and mass via body.mass,
-                // mirroring PbfFluidSpawner.SpawnOneInternal.
                 PhysicsShapeDefinition shapeDefinition = snapshot.shapeDefinition;
-                if (snapshot.density > 1e-6f)
-                    shapeDefinition.density = snapshot.density;
+                shapeDefinition.density = snapshot.density;
 
                 PhysicsShape particleShape = particle.CreateShape(
                     snapshot.circleGeometry,
                     shapeDefinition);
 
                 if (!particleShape.isValid)
-                {
-                    particle.Destroy();
                     throw new InvalidOperationException("Failed to recreate particle shape " + i + ".");
-                }
 
                 particleShape.userData = snapshot.shapeUserData;
                 particleShape.callbackTarget = snapshot.shapeCallbackTarget;
-
                 if (snapshot.mass > 1e-6f)
                     particle.mass = snapshot.mass;
 
-                particles.Add(particle);
-
                 if (snapshot.simulation != null)
+                {
+                    registeredInSimulation[i] = true;
                     snapshot.simulation.AddParticle(particle, snapshot.fluidTypeId);
+                }
             }
+
+            // Do not discard the snapshots unless the old compound body is
+            // actually destroyed. This leaves a retryable state on failure.
+            if (!solidifiedBody.Destroy())
+                throw new InvalidOperationException("Failed to destroy the solidified body after reconstruction.");
         }
         catch (Exception exception)
         {
@@ -482,62 +873,157 @@ public static class ParticleSolidifier
 
             for (int i = 0; i < particles.Count; i++)
             {
-                if (i < snapshots.Count && snapshots[i].simulation != null)
-                    snapshots[i].simulation.RemoveParticle(particles[i]);
+                if (registeredInSimulation[i] && snapshots[i].simulation != null)
+                {
+                    try
+                    {
+                        snapshots[i].simulation.RemoveParticle(particles[i]);
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        Debug.LogException(rollbackException);
+                    }
+                }
 
                 if (particles[i].isValid)
-                    particles[i].Destroy();
+                {
+                    try
+                    {
+                        particles[i].Destroy();
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        Debug.LogException(rollbackException);
+                    }
+                }
             }
 
-            // Keep the solid body and its snapshots intact so the operation
-            // can be retried or inspected after a failed reconstruction.
+            // Keep the solid body and its snapshots intact so the operation can
+            // be retried or inspected after a failed reconstruction.
             return new List<PhysicsBody>();
         }
 
-        // Particle reconstruction succeeded; now the old compound body and
-        // its temporary snapshot objects can be removed.
-        solidifiedBody.Destroy();
         DestroySnapshots(snapshots);
+        DestroyManifest(manifest);
 
-        Debug.Log("[ParticleSolidifier] Liquified " + particles.Count + " particles.");
+        Debug.Log("[ParticleSolidifier] Liquified " + particles.Count + " original particles.");
         return particles;
     }
 
     /// <summary>
-    /// Destroys a solidified body and the temporary snapshot objects stored
-    /// on its shapes. Use this instead of PhysicsBody.Destroy when discarding
-    /// a solidified body without liquifying it.
+    /// Destroys a solidified body and its snapshots without liquifying it.
+    /// Use this instead of PhysicsBody.Destroy when discarding a solidified body.
+    /// The body-level manifest is used so snapshots for fully-subtracted cells
+    /// are also destroyed.
     /// </summary>
     public static void DestroySolidifiedBody(PhysicsBody solidifiedBody)
     {
         if (!solidifiedBody.isValid)
             return;
 
-        List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>();
+        ParticleSolidifierManifest manifest;
+        bool manifestIncomplete;
+        List<ParticleSolidifierSnapshot> snapshots =
+            CollectSnapshots(solidifiedBody, out manifest, out manifestIncomplete);
 
+        if (manifestIncomplete)
+        {
+            Debug.LogWarning(
+                "[ParticleSolidifier] The manifest contains missing snapshots. The body will be destroyed, " +
+                "but already-missing source particles cannot be recovered.");
+        }
+
+        if (!solidifiedBody.Destroy())
+        {
+            Debug.LogWarning("[ParticleSolidifier] Could not destroy the solidified body; its snapshots were retained.");
+            return;
+        }
+
+        DestroySnapshots(snapshots);
+        DestroyManifest(manifest);
+    }
+
+    private static List<ParticleSolidifierSnapshot> CollectSnapshots(
+        PhysicsBody solidifiedBody,
+        out ParticleSolidifierManifest manifest,
+        out bool manifestIncomplete)
+    {
+        manifestIncomplete = false;
+        List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>();
+        HashSet<ParticleSolidifierSnapshot> uniqueSnapshots =
+            new HashSet<ParticleSolidifierSnapshot>();
+
+        PhysicsUserData bodyUserData = solidifiedBody.userData;
+        manifest = bodyUserData.objectValue as ParticleSolidifierManifest;
+
+        if (manifest != null)
+        {
+            if (manifest.snapshots == null)
+            {
+                manifestIncomplete = true;
+                Debug.LogError(
+                    "[ParticleSolidifier] The body manifest snapshot list is missing.");
+            }
+            else
+            {
+                for (int i = 0; i < manifest.snapshots.Count; i++)
+                {
+                    ParticleSolidifierSnapshot snapshot = manifest.snapshots[i];
+
+                    if (snapshot == null)
+                    {
+                        manifestIncomplete = true;
+                        Debug.LogError(
+                            "[ParticleSolidifier] The body manifest contains a missing snapshot at index " + i + ".");
+                        continue;
+                    }
+
+                    if (uniqueSnapshots.Add(snapshot))
+                        snapshots.Add(snapshot);
+                }
+            }
+        }
+
+        // Also inspect shape user data. This deduplicates fragments belonging
+        // to the same source particle and supports solid bodies created by the
+        // previous one-shape-per-particle implementation (without a manifest).
         using (NativeArray<PhysicsShape> shapes = solidifiedBody.GetShapes())
         {
             for (int i = 0; i < shapes.Length; i++)
             {
                 PhysicsUserData userData = shapes[i].userData;
-                ParticleSolidifierSnapshot snapshot = userData.objectValue as ParticleSolidifierSnapshot;
+                ParticleSolidifierSnapshot snapshot =
+                    userData.objectValue as ParticleSolidifierSnapshot;
 
-                if (snapshot != null)
+                if (snapshot != null && uniqueSnapshots.Add(snapshot))
                     snapshots.Add(snapshot);
             }
         }
 
-        solidifiedBody.Destroy();
-        DestroySnapshots(snapshots);
+        return snapshots;
     }
 
     private static void DestroySnapshots(List<ParticleSolidifierSnapshot> snapshots)
     {
+        if (snapshots == null)
+            return;
+
+        HashSet<ParticleSolidifierSnapshot> uniqueSnapshots =
+            new HashSet<ParticleSolidifierSnapshot>();
+
         for (int i = 0; i < snapshots.Count; i++)
         {
-            if (snapshots[i] != null)
-                UnityEngine.Object.Destroy(snapshots[i]);
+            ParticleSolidifierSnapshot snapshot = snapshots[i];
+
+            if (snapshot != null && uniqueSnapshots.Add(snapshot))
+                UnityEngine.Object.Destroy(snapshot);
         }
+    }
+
+    private static void DestroyManifest(ParticleSolidifierManifest manifest)
+    {
+        if (manifest != null)
+            UnityEngine.Object.Destroy(manifest);
     }
 
     // ---------------------------------------------------------------------
