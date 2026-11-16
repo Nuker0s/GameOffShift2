@@ -63,22 +63,18 @@ public static class ParticleSolidifier
 
     /// <summary>
     /// Partitions the supplied particles into proximity-connected blobs and
-    /// solidifies each blob independently. The returned array has one entry per
-    /// blob, in the same order as ParticleBlobPartitioner.GetBlobs. An entry is
-    /// invalid when that blob could not be solidified (for example, fewer than
-    /// three particles were in it).
-    ///
-    /// connectionDistance is the maximum world-space centre-to-centre distance
-    /// for two particles to be directly connected.
+    /// solidifies each blob independently. Blobs with fewer than three valid
+    /// particles are skipped. The returned list contains one body per successful
+    /// blob solidification.
     /// </summary>
-    public static PhysicsBody[] SolidifyBlobs(
-        PhysicsBody[] particles,
+    public static List<PhysicsBody> Solidify(
+        List<PhysicsBody> particles,
         float connectionDistance,
         float boundaryPadding = 0.25f,
         PhysicsBodyDefinition? solidBodyDefinition = null)
     {
-        return SolidifyBlobsInternal(
-            particles,
+        return SolidifyGroupsInternal(
+            particles != null ? particles.ToArray() : null,
             connectionDistance,
             boundaryPadding,
             solidBodyDefinition,
@@ -86,88 +82,64 @@ public static class ParticleSolidifier
     }
 
     /// <summary>
-    /// Partitions the supplied particles into proximity-connected blobs and
-    /// solidifies each blob independently, removing its particles from the
-    /// supplied PBF simulation. Liquifying each returned body restores its
-    /// original particles to that simulation.
+    /// Partitions and solidifies each blob independently, removing successfully
+    /// solidified particles from the supplied PBF simulation. Liquify restores
+    /// those particles to the simulation.
     /// </summary>
-    public static PhysicsBody[] SolidifyBlobs(
-        PhysicsBody[] particles,
+    public static List<PhysicsBody> Solidify(
+        List<PhysicsBody> particles,
         PbfFluidLite simulation,
         float connectionDistance,
         float boundaryPadding = 0.25f,
         PhysicsBodyDefinition? solidBodyDefinition = null)
     {
-        return SolidifyBlobsInternal(
-            particles,
+        return SolidifyGroupsInternal(
+            particles != null ? particles.ToArray() : null,
             connectionDistance,
             boundaryPadding,
             solidBodyDefinition,
             simulation);
     }
 
-    private static PhysicsBody[] SolidifyBlobsInternal(
+    private static List<PhysicsBody> SolidifyGroupsInternal(
         PhysicsBody[] particles,
         float connectionDistance,
         float boundaryPadding,
         PhysicsBodyDefinition? solidBodyDefinition,
         PbfFluidLite simulation)
     {
-        PhysicsBody[][] blobs = ParticleBlobPartitioner.GetBlobs(particles, connectionDistance);
-        PhysicsBody[] solidifiedBodies = new PhysicsBody[blobs.Length];
+        List<List<PhysicsBody>> blobs = ParticleBlobPartitioner.PartitionBlobs(
+            particles,
+            connectionDistance);
+        List<PhysicsBody> solidifiedBodies = new List<PhysicsBody>(blobs.Count);
 
-        for (int i = 0; i < blobs.Length; i++)
+        for (int i = 0; i < blobs.Count; i++)
         {
-            if (blobs[i].Length < 3)
+            if (blobs[i].Count < 3)
             {
                 Debug.LogWarning(
-                    "[ParticleSolidifier] Blob " + i + " contains " + blobs[i].Length +
+                    "[ParticleSolidifier] Blob " + i + " contains " + blobs[i].Count +
                     " particles. At least 3 are required, so this blob was left unchanged.");
                 continue;
             }
 
-            List<PhysicsBody> blobParticles = new List<PhysicsBody>(blobs[i]);
-            solidifiedBodies[i] = SolidifyInternal(
-                blobParticles,
+            PhysicsBody solidBody = SolidifyInternal(
+                blobs[i],
                 boundaryPadding,
                 solidBodyDefinition,
                 simulation);
+
+            if (solidBody.isValid)
+                solidifiedBodies.Add(solidBody);
         }
 
         return solidifiedBodies;
     }
 
     /// <summary>
-    /// Solidifies particles into a single compound body.
-    /// Each input body must have exactly one circular shape.
-    ///
-    /// boundaryPadding expands the convex hull before the Voronoi cells are
-    /// generated. solidBodyDefinition optionally overrides the common body
-    /// settings; its position, rotation and velocities are set by this method.
+    /// Solidifies one already-partitioned blob. Each input body must have exactly
+    /// one circular shape. boundaryPadding expands the blob's Voronoi boundary.
     /// </summary>
-    public static PhysicsBody Solidify(
-        List<PhysicsBody> particles,
-        float boundaryPadding = 0.25f,
-        PhysicsBodyDefinition? solidBodyDefinition = null)
-    {
-        return SolidifyInternal(particles, boundaryPadding, solidBodyDefinition, null);
-    }
-
-    /// <summary>
-    /// Solidifies particles and removes them from the supplied PBF simulation.
-    /// The simulation and each particle's fluid type are stored with the shape
-    /// snapshots, so Liquify(solidifiedBody) automatically registers the
-    /// recreated particles again.
-    /// </summary>
-    public static PhysicsBody Solidify(
-        List<PhysicsBody> particles,
-        PbfFluidLite simulation,
-        float boundaryPadding = 0.25f,
-        PhysicsBodyDefinition? solidBodyDefinition = null)
-    {
-        return SolidifyInternal(particles, boundaryPadding, solidBodyDefinition, simulation);
-    }
-
     private static PhysicsBody SolidifyInternal(
         List<PhysicsBody> particles,
         float boundaryPadding,
