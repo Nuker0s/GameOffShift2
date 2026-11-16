@@ -16,7 +16,7 @@ MonoBehaviour:
   m_PhysicsLayerNames:
     m_Names:
     - Default
-    - 
+    - Terrain
     - 
     - 
     - 

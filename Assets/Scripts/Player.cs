@@ -107,7 +107,7 @@ public class Player : MonoBehaviour
         if (state == State.Solid || particles.Count < 3)
             return;
 
-        List<PhysicsBody> results = ParticleSolidifier.Solidify(particles, sim, 1f,boundaryPadding);
+        List<PhysicsBody> results = ParticleSolidifier.Solidify(particles, sim, 1f,boundaryPadding,null,"Terrain");
         if (results == null || results.Count == 0)
             return;
 

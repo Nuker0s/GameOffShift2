@@ -87,16 +87,17 @@ public static class ParticleSolidifier
     /// solidifies each blob independently. Blobs with fewer than three valid
     /// particles are skipped.
     ///
-    /// terrainBodies is an explicit whitelist. Only shapes attached to these
-    /// bodies and in the source particle world can be subtracted. Pass null or
-    /// an empty list to retain the original no-terrain behaviour.
+    /// Once per partitioned blob, terrain candidates are discovered with one
+    /// circle-overlap query filtered to terrainLayerName. The query circle
+    /// encloses the complete generated Voronoi region. The name is resolved
+    /// through PhysicsLayers. Pass null or an empty name for no terrain subtraction.
     /// </summary>
     public static List<PhysicsBody> Solidify(
         List<PhysicsBody> particles,
         float connectionDistance,
         float boundaryPadding = 0.25f,
         PhysicsBodyDefinition? solidBodyDefinition = null,
-        List<PhysicsBody> terrainBodies = null)
+        string terrainLayerName = null)
     {
         return SolidifyGroupsInternal(
             particles != null ? particles.ToArray() : null,
@@ -104,7 +105,7 @@ public static class ParticleSolidifier
             boundaryPadding,
             solidBodyDefinition,
             null,
-            terrainBodies);
+            terrainLayerName);
     }
 
     /// <summary>
@@ -117,7 +118,7 @@ public static class ParticleSolidifier
         float connectionDistance,
         float boundaryPadding = 0.25f,
         PhysicsBodyDefinition? solidBodyDefinition = null,
-        List<PhysicsBody> terrainBodies = null)
+        string terrainLayerName = null)
     {
         return SolidifyGroupsInternal(
             particles != null ? particles.ToArray() : null,
@@ -125,7 +126,7 @@ public static class ParticleSolidifier
             boundaryPadding,
             solidBodyDefinition,
             simulation,
-            terrainBodies);
+            terrainLayerName);
     }
 
     private static List<PhysicsBody> SolidifyGroupsInternal(
@@ -134,8 +135,23 @@ public static class ParticleSolidifier
         float boundaryPadding,
         PhysicsBodyDefinition? solidBodyDefinition,
         PbfFluidLite simulation,
-        List<PhysicsBody> terrainBodies)
+        string terrainLayerName)
     {
+        PhysicsMask terrainLayerMask = PhysicsMask.None;
+
+        if (!string.IsNullOrWhiteSpace(terrainLayerName))
+        {
+            terrainLayerMask = PhysicsLayers.GetLayerMask(terrainLayerName);
+
+            if (!terrainLayerMask.AreAnyBitsSet(PhysicsMask.All))
+            {
+                Debug.LogError(
+                    "[ParticleSolidifier] Terrain layer '" + terrainLayerName +
+                    "' could not be resolved. Solidification was cancelled.");
+                return new List<PhysicsBody>();
+            }
+        }
+
         List<List<PhysicsBody>> blobs = ParticleBlobPartitioner.PartitionBlobs(
             particles,
             connectionDistance);
@@ -157,7 +173,7 @@ public static class ParticleSolidifier
                 boundaryPadding,
                 solidBodyDefinition,
                 simulation,
-                terrainBodies);
+                terrainLayerMask);
 
             if (solidBody.isValid)
                 solidifiedBodies.Add(solidBody);
@@ -175,7 +191,7 @@ public static class ParticleSolidifier
         float boundaryPadding,
         PhysicsBodyDefinition? solidBodyDefinition,
         PbfFluidLite simulation,
-        List<PhysicsBody> terrainBodies)
+        PhysicsMask terrainLayerMask)
     {
         if (particles == null || particles.Count < 3)
         {
@@ -289,8 +305,12 @@ public static class ParticleSolidifier
         }
 
         PhysicsTransform solidTransform = new PhysicsTransform(center, PhysicsRotate.identity);
-        HashSet<PhysicsBody> terrainBodySet = BuildTerrainBodySet(terrainBodies, world, sourceBodies);
         HashSet<PhysicsShape> unsupportedShapesAlreadyReported = new HashSet<PhysicsShape>();
+
+        // Discover terrain once for the entire blob. The circle encloses the
+        // generated Voronoi region, including its expanded outer boundary.
+        // Every particle cell then reuses this same terrain candidate list.
+        List<PhysicsShape> terrainCandidates = new List<PhysicsShape>();
 
         // Build and validate every cell's output geometry before creating or
         // destroying any source body. A completely removed cell is represented
@@ -301,6 +321,16 @@ public static class ParticleSolidifier
 
         try
         {
+            if (terrainLayerMask.AreAnyBitsSet(PhysicsMask.All))
+            {
+                CircleGeometry blobQueryCircle = CalculateEnclosingCircle(cells, center);
+                terrainCandidates = GetTerrainCandidates(
+                    world,
+                    blobQueryCircle,
+                    terrainLayerMask,
+                    sourceBodies);
+            }
+
             for (int i = 0; i < cells.Length; i++)
             {
                 List<Vector2> localVertices = new List<Vector2>(cells[i].Count);
@@ -315,12 +345,9 @@ public static class ParticleSolidifier
                         "Invalid Voronoi polygon generated for particle " + i + ".");
 
                 CellGeometry generated = ComposeCellGeometry(
-                    world,
-                    cells[i],
                     baseGeometry,
                     solidTransform,
-                    terrainBodySet,
-                    sourceBodies,
+                    terrainCandidates,
                     unsupportedShapesAlreadyReported);
 
                 cellGeometry[i] = generated;
@@ -501,66 +528,13 @@ public static class ParticleSolidifier
         return solidBody;
     }
 
-    private static HashSet<PhysicsBody> BuildTerrainBodySet(
-        List<PhysicsBody> terrainBodies,
-        PhysicsWorld particleWorld,
-        HashSet<PhysicsBody> sourceBodies)
-    {
-        HashSet<PhysicsBody> result = new HashSet<PhysicsBody>();
-
-        if (terrainBodies == null)
-            return result;
-
-        for (int i = 0; i < terrainBodies.Count; i++)
-        {
-            PhysicsBody terrainBody = terrainBodies[i];
-
-            if (!terrainBody.isValid)
-                continue;
-
-            if (!terrainBody.world.Equals(particleWorld))
-            {
-                Debug.LogWarning(
-                    "[ParticleSolidifier] Terrain body " + i +
-                    " belongs to a different PhysicsWorld and was ignored.");
-                continue;
-            }
-
-            // Even if accidentally supplied as terrain, source particle bodies
-            // are never considered subtraction geometry.
-            if (sourceBodies.Contains(terrainBody))
-                continue;
-
-            result.Add(terrainBody);
-        }
-
-        return result;
-    }
-
     private static CellGeometry ComposeCellGeometry(
-        PhysicsWorld world,
-        List<Vector2> worldCellVertices,
         PolygonGeometry baseGeometry,
         PhysicsTransform solidTransform,
-        HashSet<PhysicsBody> terrainBodies,
-        HashSet<PhysicsBody> sourceBodies,
+        List<PhysicsShape> terrainShapes,
         HashSet<PhysicsShape> unsupportedShapesAlreadyReported)
     {
         CellGeometry result = new CellGeometry();
-
-        if (terrainBodies.Count == 0)
-        {
-            result.polygons.Add(baseGeometry);
-            result.islandCount = 1;
-            return result;
-        }
-
-        PhysicsAABB cellAABB = CalculateWorldAABB(worldCellVertices);
-        List<PhysicsShape> terrainShapes = GetTerrainCandidates(
-            world,
-            cellAABB,
-            terrainBodies,
-            sourceBodies);
 
         if (terrainShapes.Count == 0)
         {
@@ -718,16 +692,23 @@ public static class ParticleSolidifier
 
     private static List<PhysicsShape> GetTerrainCandidates(
         PhysicsWorld world,
-        PhysicsAABB worldAABB,
-        HashSet<PhysicsBody> terrainBodies,
+        CircleGeometry worldCircle,
+        PhysicsMask terrainLayerMask,
         HashSet<PhysicsBody> sourceBodies)
     {
         List<PhysicsShape> candidates = new List<PhysicsShape>();
         HashSet<PhysicsShape> uniqueShapes = new HashSet<PhysicsShape>();
 
-        NativeArray<PhysicsQuery.WorldOverlapResult> overlaps = world.OverlapAABB(
-            worldAABB,
-            new PhysicsQuery.QueryFilter(),
+        // This query is performed once for the whole blob. Its hitCategories
+        // restrict results to the requested terrain layer; PhysicsMask.All
+        // allows the query to hit terrain regardless of contact masks.
+        PhysicsQuery.QueryFilter queryFilter = new PhysicsQuery.QueryFilter(
+            PhysicsMask.All,
+            terrainLayerMask);
+
+        NativeArray<PhysicsQuery.WorldOverlapResult> overlaps = world.OverlapGeometry(
+            worldCircle,
+            queryFilter,
             Allocator.Temp);
 
         try
@@ -742,9 +723,9 @@ public static class ParticleSolidifier
                 if (!shape.isValid || !shape.world.Equals(world))
                     continue;
 
-                PhysicsBody shapeBody = shape.body;
-
-                if (!terrainBodies.Contains(shapeBody) || sourceBodies.Contains(shapeBody))
+                // The source particles are never terrain, even if their
+                // PhysicsCore2D category happens to include terrainLayerMask.
+                if (sourceBodies.Contains(shape.body))
                     continue;
 
                 if (uniqueShapes.Add(shape))
@@ -760,18 +741,31 @@ public static class ParticleSolidifier
         return candidates;
     }
 
-    private static PhysicsAABB CalculateWorldAABB(List<Vector2> worldVertices)
+    private static CircleGeometry CalculateEnclosingCircle(
+        List<Vector2>[] worldCells,
+        Vector2 blobCenter)
     {
-        Vector2 minimum = worldVertices[0];
-        Vector2 maximum = worldVertices[0];
+        // The circle is centered on the blob center. Its radius reaches the
+        // farthest generated Voronoi vertex, which also covers the farthest
+        // particle and the expansion applied to the outer Voronoi hull.
+        float radiusSquared = 0f;
 
-        for (int i = 1; i < worldVertices.Count; i++)
+        for (int cellIndex = 0; cellIndex < worldCells.Length; cellIndex++)
         {
-            minimum = Vector2.Min(minimum, worldVertices[i]);
-            maximum = Vector2.Max(maximum, worldVertices[i]);
+            List<Vector2> cell = worldCells[cellIndex];
+
+            for (int vertexIndex = 0; vertexIndex < cell.Count; vertexIndex++)
+            {
+                float distanceSquared = (cell[vertexIndex] - blobCenter).sqrMagnitude;
+                radiusSquared = Mathf.Max(radiusSquared, distanceSquared);
+            }
         }
 
-        return new PhysicsAABB(minimum, maximum);
+        // This is one broadphase overlap query for the whole blob, not a query
+        // per particle. The small margin protects against boundary precision;
+        // PhysicsComposer performs the exact per-cell subtraction afterwards.
+        float radius = Mathf.Sqrt(radiusSquared) + 0.01f;
+        return CircleGeometry.Create(radius, blobCenter);
     }
 
     /// <summary>
