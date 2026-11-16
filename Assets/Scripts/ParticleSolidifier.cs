@@ -62,6 +62,82 @@ public static class ParticleSolidifier
     }
 
     /// <summary>
+    /// Partitions the supplied particles into proximity-connected blobs and
+    /// solidifies each blob independently. The returned array has one entry per
+    /// blob, in the same order as ParticleBlobPartitioner.GetBlobs. An entry is
+    /// invalid when that blob could not be solidified (for example, fewer than
+    /// three particles were in it).
+    ///
+    /// connectionDistance is the maximum world-space centre-to-centre distance
+    /// for two particles to be directly connected.
+    /// </summary>
+    public static PhysicsBody[] SolidifyBlobs(
+        PhysicsBody[] particles,
+        float connectionDistance,
+        float boundaryPadding = 0.25f,
+        PhysicsBodyDefinition? solidBodyDefinition = null)
+    {
+        return SolidifyBlobsInternal(
+            particles,
+            connectionDistance,
+            boundaryPadding,
+            solidBodyDefinition,
+            null);
+    }
+
+    /// <summary>
+    /// Partitions the supplied particles into proximity-connected blobs and
+    /// solidifies each blob independently, removing its particles from the
+    /// supplied PBF simulation. Liquifying each returned body restores its
+    /// original particles to that simulation.
+    /// </summary>
+    public static PhysicsBody[] SolidifyBlobs(
+        PhysicsBody[] particles,
+        PbfFluidLite simulation,
+        float connectionDistance,
+        float boundaryPadding = 0.25f,
+        PhysicsBodyDefinition? solidBodyDefinition = null)
+    {
+        return SolidifyBlobsInternal(
+            particles,
+            connectionDistance,
+            boundaryPadding,
+            solidBodyDefinition,
+            simulation);
+    }
+
+    private static PhysicsBody[] SolidifyBlobsInternal(
+        PhysicsBody[] particles,
+        float connectionDistance,
+        float boundaryPadding,
+        PhysicsBodyDefinition? solidBodyDefinition,
+        PbfFluidLite simulation)
+    {
+        PhysicsBody[][] blobs = ParticleBlobPartitioner.GetBlobs(particles, connectionDistance);
+        PhysicsBody[] solidifiedBodies = new PhysicsBody[blobs.Length];
+
+        for (int i = 0; i < blobs.Length; i++)
+        {
+            if (blobs[i].Length < 3)
+            {
+                Debug.LogWarning(
+                    "[ParticleSolidifier] Blob " + i + " contains " + blobs[i].Length +
+                    " particles. At least 3 are required, so this blob was left unchanged.");
+                continue;
+            }
+
+            List<PhysicsBody> blobParticles = new List<PhysicsBody>(blobs[i]);
+            solidifiedBodies[i] = SolidifyInternal(
+                blobParticles,
+                boundaryPadding,
+                solidBodyDefinition,
+                simulation);
+        }
+
+        return solidifiedBodies;
+    }
+
+    /// <summary>
     /// Solidifies particles into a single compound body.
     /// Each input body must have exactly one circular shape.
     ///
