@@ -3,7 +3,7 @@ using Unity.Collections;
 using UnityEngine;
 using Unity.U2D.Physics;
 
-public class Player : MonoBehaviour
+public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 {
     public PbfFluidLite sim;
     public PhysicsPose body;
@@ -97,7 +97,7 @@ public class Player : MonoBehaviour
                 particle.Destroy();
                 continue;
             }
-
+            particle.callbackTarget = this;
             particles.Add(particle);
         }
     }
@@ -250,5 +250,20 @@ public class Player : MonoBehaviour
     void OnDrawGizmos()
     {
         if (Application.isPlaying == true) if(solidifiedBody!= null) Gizmos.DrawCube(solidifiedBody.position,Vector3.one*0.3f);
+    }
+
+    public void OnContactBegin2D(PhysicsEvents.ContactBeginEvent beginEvent)
+    {
+        Debug.Log("contact");
+        if( sim.GetParticleType(beginEvent.shapeA.body ) == 1 & !particles.Contains(beginEvent.shapeA.body))
+        {
+            particles.Add(beginEvent.shapeA.body);
+            Debug.Log("Added Particle");
+        }
+    }
+
+    public void OnContactEnd2D(PhysicsEvents.ContactEndEvent endEvent)
+    {
+        //throw new System.NotImplementedException();
     }
 }

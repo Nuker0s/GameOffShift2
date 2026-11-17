@@ -131,7 +131,7 @@ GameObject:
   - component: {fileID: 195335861}
   - component: {fileID: 195335860}
   - component: {fileID: 195335859}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (6)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -234,7 +234,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -297,7 +297,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -310,7 +310,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -388,7 +388,7 @@ GameObject:
   - component: {fileID: 209222906}
   - component: {fileID: 209222905}
   - component: {fileID: 209222904}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (8)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -491,7 +491,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -554,7 +554,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -567,7 +567,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -807,7 +807,7 @@ GameObject:
   - component: {fileID: 553368670}
   - component: {fileID: 553368669}
   - component: {fileID: 553368672}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (2)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -835,7 +835,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -898,7 +898,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -911,7 +911,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -1064,7 +1064,7 @@ GameObject:
   - component: {fileID: 599392185}
   - component: {fileID: 599392184}
   - component: {fileID: 599392187}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (3)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1092,7 +1092,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -1155,7 +1155,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -1168,7 +1168,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -1321,7 +1321,7 @@ GameObject:
   - component: {fileID: 605858917}
   - component: {fileID: 605858916}
   - component: {fileID: 605858915}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (9)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1424,7 +1424,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -1487,7 +1487,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -1500,7 +1500,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -2073,7 +2073,7 @@ GameObject:
   - component: {fileID: 1046182002}
   - component: {fileID: 1046182001}
   - component: {fileID: 1046182000}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (5)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -2176,7 +2176,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -2239,7 +2239,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -2252,7 +2252,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -2330,7 +2330,7 @@ GameObject:
   - component: {fileID: 1145265396}
   - component: {fileID: 1145265395}
   - component: {fileID: 1145265397}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (4)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -2373,7 +2373,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -2436,7 +2436,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -2449,7 +2449,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -2627,7 +2627,7 @@ GameObject:
   - component: {fileID: 1398099618}
   - component: {fileID: 1398099617}
   - component: {fileID: 1398099620}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (1)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -2655,7 +2655,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -2718,7 +2718,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -2731,7 +2731,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0
@@ -3118,7 +3118,7 @@ GameObject:
   - component: {fileID: 1802858647}
   - component: {fileID: 1802858646}
   - component: {fileID: 1802858645}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: Square (7)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -3221,7 +3221,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -3284,7 +3284,7 @@ MonoBehaviour:
     m_EntityId:
       m_rawData: 0
     m_PhysicsMask:
-      bitMask: 0
+      bitMask: 64
     m_Float: 0
     m_Int: 0
     m_Int64: 0
@@ -3297,7 +3297,7 @@ MonoBehaviour:
   m_Definition:
     contactFilter:
       m_Categories:
-        bitMask: 1
+        bitMask: 64
       m_Contacts:
         bitMask: 18446744073709551615
       m_GroupIndex: 0

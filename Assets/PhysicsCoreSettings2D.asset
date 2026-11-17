@@ -406,4 +406,4 @@ MonoBehaviour:
   m_LengthUnitsPerMeter: 1
   m_RenderingMode: 0
   m_DisableSimulation: 0
-  m_AlwaysDrawWorlds: 1
+  m_AlwaysDrawWorlds: 0
