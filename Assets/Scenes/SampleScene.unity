@@ -2948,7 +2948,7 @@ MonoBehaviour:
   m_CallbackTarget: {fileID: 0}
   m_DefinitionAsset: {fileID: 0}
   m_Definition:
-    m_BodyType: 2
+    m_BodyType: 0
     m_BodyConstraints: 0
     m_TransformWriteMode: 1
     m_Position: {x: 0, y: 0}
@@ -3031,6 +3031,9 @@ MonoBehaviour:
   baseOffset: {x: 0, y: 0.5}
   moveForce: 0.5
   maxForceDistance: 1.5
+  solidTorque: 20
+  absorptionRange: 0.5
+  absorptionChecksPerSecond: 15
 --- !u!4 &1537109698
 Transform:
   m_ObjectHideFlags: 0

@@ -298,7 +298,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         // or other geometry convert that rotation into rolling movement.
         float horizontalInput = PIR.instance.move.ReadValue<Vector2>().x;
         if (Mathf.Abs(horizontalInput) > 0.001f && solidTorque > 0f)
-            solidifiedBody.ApplyTorque(horizontalInput * solidTorque);
+            solidifiedBody.ApplyTorque(-horizontalInput * solidTorque);
     }
 
     private void CheckForNearbyParticles()

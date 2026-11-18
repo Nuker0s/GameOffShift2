@@ -374,6 +374,12 @@ public static class ParticleSolidifier
             ? solidBodyDefinition.Value
             : inputs[0].bodyDefinition;
 
+        // Solidified blobs must always be fully simulated and free to rotate,
+        // regardless of the source particles' settings or a supplied definition.
+        bodyDefinition.type = PhysicsBody.BodyType.Dynamic;
+        bodyDefinition.constraints = PhysicsBody.BodyConstraints.None;
+        bodyDefinition.awake = true;
+
         bodyDefinition.position = center;
         bodyDefinition.rotation = PhysicsRotate.identity;
         bodyDefinition.linearVelocity = averageVelocity;
