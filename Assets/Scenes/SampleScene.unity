@@ -814,7 +814,7 @@ MonoBehaviour:
   sortingOrder: 0
   gameObjectLayer: 0
   renderZOffset: 0
-  shadowCasterPrefab: {fileID: 0}
+  shadowCasterPrefab: {fileID: 2693026043838254783, guid: 1e45f15d2881c034db9d8bf133a7a707, type: 3}
   baseColor: {r: 0, g: 0.69411767, b: 0.5372549, a: 1}
   randomizeParticleColors: 1
   hueVariation: 0.015

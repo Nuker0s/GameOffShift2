@@ -66,7 +66,7 @@ MonoBehaviour:
   m_UseRendererSilhouette: 1
   m_CastsShadows: 1
   m_SelfShadows: 0
-  m_AlphaCutoff: 0.1
+  m_AlphaCutoff: 0
   m_ApplyToSortingLayers: 00000000i
   m_ShapePath:
   - {x: -0.5, y: -0.5, z: 0}
@@ -76,11 +76,11 @@ MonoBehaviour:
   m_ShapePathHash: 0
   m_ShadowShape2DComponent: {fileID: 6860733147314039325}
   m_ShadowShape2DProvider:
-    rid: 877273260901531732
+    rid: 877273263692054618
   m_ShadowCastingSource: 2
   m_ShadowMesh:
     rid: 877273260901531733
-  m_CastingOption: 1
+  m_CastingOption: 2
   m_PreviousTrimEdge: 0
   m_PreviousGeneratorId: Unity.Legacy
   m_PreviousFanSegments: 3
@@ -92,11 +92,6 @@ MonoBehaviour:
   references:
     version: 2
     RefIds:
-    - rid: -2
-      type: {class: , ns: , asm: }
-    - rid: 877273260901531732
-      type: {class: SolidifiedParticleShadowProvider, ns: , asm: Assembly-CSharp}
-      data: 
     - rid: 877273260901531733
       type: {class: ShadowMesh2D, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.2D.Runtime}
       data:
@@ -117,6 +112,23 @@ MonoBehaviour:
     - rid: 877273260901531734
       type: {class: Shadow2DProviderSources, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.2D.Runtime}
       data:
-        m_SelectedHashCode: 0
+        m_SelectedHashCode: 1168429837
         m_SelectedSource:
-          rid: -2
+          rid: 877273263692054617
+    - rid: 877273263692054617
+      type: {class: Shadow2DProviderSource, ns: UnityEngine.Rendering.Universal, asm: Unity.RenderPipelines.Universal.2D.Runtime}
+      data:
+        m_HashCode: 1168429837
+        m_SourceType: 2
+        m_MenuPriority: 0
+        m_MenuName:
+          m_Text: Solidified Particle Outline
+          m_Image: {fileID: 0}
+          m_Tooltip: 
+          m_TextWithWhitespace: "Solidified Particle Outline\u200B"
+        m_Provider:
+          rid: 877273263692054618
+        m_Component: {fileID: 6860733147314039325}
+    - rid: 877273263692054618
+      type: {class: SolidifiedParticleShadowProvider, ns: , asm: Assembly-CSharp}
+      data: 

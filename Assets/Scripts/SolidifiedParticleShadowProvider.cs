@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
@@ -40,23 +41,35 @@ public sealed class SolidifiedParticleShadowProvider : ShadowShape2DProvider
             return;
         }
 
-        // Fill managed arrays first. NativeArray variables declared directly in
-        // a using statement are readonly, so their indexers cannot be assigned.
-        Vector3[] worldVertexArray = new Vector3[localVertices.Length];
-
-        for (int i = 0; i < localVertices.Length; i++)
+        // SetShape(OutlineTopology.Lines) with interior geometry expects each
+        // contour to be supplied as an ordered, closed chain of line pairs.
+        // Refuse malformed input before it reaches URP's Burst tessellator.
+        if (!HasOnlyClosedContours(sourceIndices, localVertices.Length))
         {
-            Vector2 localPoint = localVertices[i];
-            worldVertexArray[i] = shadowData.transform.TransformPoint(
-                new Vector3(localPoint.x, localPoint.y, 0f));
+            Debug.LogError(
+                "[SolidifiedParticleShadowProvider] Shadow outline contains an open, " +
+                "disconnected, or malformed contour. Skipping this shadow update.", shadowData);
+            return;
         }
 
-        int[] indexArray = new int[sourceIndices.Length];
-        Array.Copy(sourceIndices, indexArray, sourceIndices.Length);
+        NativeArray<Vector3> worldVertices = default;
+        NativeArray<int> indices = default;
 
-        using (NativeArray<Vector3> worldVertices = new NativeArray<Vector3>(worldVertexArray, Allocator.Temp))
-        using (NativeArray<int> indices = new NativeArray<int>(indexArray, Allocator.Temp))
+        try
         {
+            worldVertices = new NativeArray<Vector3>(localVertices.Length, Allocator.Temp);
+            indices = new NativeArray<int>(sourceIndices.Length, Allocator.Temp);
+
+            for (int i = 0; i < localVertices.Length; i++)
+            {
+                Vector2 localPoint = localVertices[i];
+                worldVertices[i] = shadowData.transform.TransformPoint(
+                    new Vector3(localPoint.x, localPoint.y, 0f));
+            }
+
+            for (int i = 0; i < sourceIndices.Length; i++)
+                indices[i] = sourceIndices[i];
+
             persistentShadowShape.SetShape(
                 worldVertices,
                 indices,
@@ -65,5 +78,73 @@ public sealed class SolidifiedParticleShadowProvider : ShadowShape2DProvider
                 true,
                 true);
         }
+        finally
+        {
+            if (worldVertices.IsCreated)
+                worldVertices.Dispose();
+
+            if (indices.IsCreated)
+                indices.Dispose();
+        }
+    }
+
+    private static bool HasOnlyClosedContours(int[] indices, int vertexCount)
+    {
+        int contourStart = -1;
+        int previousEnd = -1;
+        int contourEdgeCount = 0;
+        bool contourClosed = false;
+        HashSet<int> contourVertices = new HashSet<int>();
+
+        for (int i = 0; i < indices.Length; i += 2)
+        {
+            int start = indices[i];
+            int end = indices[i + 1];
+
+            if (start < 0 || start >= vertexCount || end < 0 || end >= vertexCount || start == end)
+                return false;
+
+            if (contourStart < 0 || contourClosed)
+            {
+                if (contourStart >= 0 && (!contourClosed || contourEdgeCount < 3))
+                    return false;
+
+                if (contourStart >= 0 && start == previousEnd)
+                    return false;
+
+                contourStart = start;
+                previousEnd = start;
+                contourEdgeCount = 0;
+                contourClosed = false;
+                contourVertices.Clear();
+                contourVertices.Add(start);
+            }
+            else if (start != previousEnd)
+            {
+                return false;
+            }
+
+            if (end == contourStart)
+            {
+                contourEdgeCount++;
+
+                if (contourEdgeCount < 3)
+                    return false;
+
+                contourClosed = true;
+            }
+            else
+            {
+                if (contourVertices.Contains(end))
+                    return false;
+
+                contourVertices.Add(end);
+                contourEdgeCount++;
+            }
+
+            previousEnd = end;
+        }
+
+        return contourClosed && contourEdgeCount >= 3;
     }
 }

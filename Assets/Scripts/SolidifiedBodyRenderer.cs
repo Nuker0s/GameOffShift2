@@ -467,62 +467,175 @@ public sealed class SolidifiedBodyRenderer : MonoBehaviour
             }
         }
 
-        List<Vector2> resultVertices = new List<Vector2>();
-        List<int> resultIndices = new List<int>();
-        Dictionary<OutlinePointKey, int> vertexIndexLookup = new Dictionary<OutlinePointKey, int>();
+        // Keep only edges that belong to exactly one polygon. Edges shared by
+        // two polygons are internal and must not be included in the silhouette.
+        List<OutlineSegment> boundaryEdges = new List<OutlineSegment>();
 
         foreach (KeyValuePair<OutlineEdgeKey, int> edgeEntry in edgeCounts)
         {
-            if (edgeEntry.Value != 1)
+            if (edgeEntry.Value == 1)
+                boundaryEdges.Add(uniqueEdges[edgeEntry.Key]);
+        }
+
+        if (boundaryEdges.Count < 3)
+            return;
+
+        // URP's Lines topology is not an unordered edge soup when interior
+        // geometry is requested. Its edge builder groups consecutive line pairs
+        // into contours and detects closure when the final endpoint returns to
+        // the first endpoint. Build connected, ordered loops explicitly.
+        Dictionary<OutlinePointKey, List<int>> adjacency =
+            new Dictionary<OutlinePointKey, List<int>>();
+
+        for (int edgeIndex = 0; edgeIndex < boundaryEdges.Count; edgeIndex++)
+        {
+            OutlineSegment edge = boundaryEdges[edgeIndex];
+            OutlinePointKey startKey = new OutlinePointKey(edge.start);
+            OutlinePointKey endKey = new OutlinePointKey(edge.end);
+
+            AddAdjacentEdge(adjacency, startKey, edgeIndex);
+            AddAdjacentEdge(adjacency, endKey, edgeIndex);
+        }
+
+        bool[] componentVisited = new bool[boundaryEdges.Count];
+        List<Vector2> resultVertices = new List<Vector2>();
+        List<int> resultIndices = new List<int>();
+        int rejectedComponentCount = 0;
+
+        for (int edgeIndex = 0; edgeIndex < boundaryEdges.Count; edgeIndex++)
+        {
+            if (componentVisited[edgeIndex])
                 continue;
 
-            OutlineSegment edge = uniqueEdges[edgeEntry.Key];
-            int startIndex = GetOrAddBoundaryVertex(edge.start, resultVertices, vertexIndexLookup);
-            int endIndex = GetOrAddBoundaryVertex(edge.end, resultVertices, vertexIndexLookup);
+            List<int> componentEdges = new List<int>();
+            HashSet<OutlinePointKey> componentPoints = new HashSet<OutlinePointKey>();
+            Queue<int> pendingEdges = new Queue<int>();
 
-            if (startIndex == endIndex)
+            pendingEdges.Enqueue(edgeIndex);
+            componentVisited[edgeIndex] = true;
+
+            while (pendingEdges.Count > 0)
+            {
+                int currentEdgeIndex = pendingEdges.Dequeue();
+                componentEdges.Add(currentEdgeIndex);
+
+                OutlineSegment currentEdge = boundaryEdges[currentEdgeIndex];
+                OutlinePointKey startKey = new OutlinePointKey(currentEdge.start);
+                OutlinePointKey endKey = new OutlinePointKey(currentEdge.end);
+
+                componentPoints.Add(startKey);
+                componentPoints.Add(endKey);
+
+                AddConnectedEdgesToQueue(startKey, adjacency, componentVisited, pendingEdges);
+                AddConnectedEdgesToQueue(endKey, adjacency, componentVisited, pendingEdges);
+            }
+
+            // A valid silhouette contour is a simple cycle: every vertex has
+            // exactly two incident boundary edges. Open or branching components
+            // are unsafe input for URP's interior tessellator, so omit them.
+            bool validCycle = true;
+
+            foreach (OutlinePointKey pointKey in componentPoints)
+            {
+                if (!adjacency.TryGetValue(pointKey, out List<int> connectedEdges) ||
+                    connectedEdges.Count != 2)
+                {
+                    validCycle = false;
+                    break;
+                }
+            }
+
+            if (!validCycle)
+            {
+                rejectedComponentCount++;
                 continue;
+            }
 
-            resultIndices.Add(startIndex);
-            resultIndices.Add(endIndex);
+            List<Vector2> loop = new List<Vector2>();
+
+            if (!TryTraceBoundaryLoop(
+                componentEdges[0],
+                componentEdges.Count,
+                boundaryEdges,
+                adjacency,
+                loop))
+            {
+                rejectedComponentCount++;
+                continue;
+            }
+
+            float signedArea = CalculateSignedArea(loop.ToArray());
+
+            if (loop.Count < 3 || Mathf.Abs(signedArea) <= 0.000001f)
+            {
+                rejectedComponentCount++;
+                continue;
+            }
+
+            // The provider declares Clockwise winding. Normalize every contour
+            // to that orientation before sending it to URP.
+            if (signedArea > 0f)
+                loop.Reverse();
+
+            // Give each contour its own vertex indices. This prevents two loops
+            // that happen to touch at an equal position from being interpreted
+            // as one path by URP's line-topology parser.
+            int firstVertex = resultVertices.Count;
+
+            for (int i = 0; i < loop.Count; i++)
+                resultVertices.Add(loop[i]);
+
+            for (int i = 0; i < loop.Count; i++)
+            {
+                resultIndices.Add(firstVertex + i);
+                resultIndices.Add(firstVertex + ((i + 1) % loop.Count));
+            }
+        }
+
+        if (rejectedComponentCount > 0)
+        {
+            Debug.LogWarning(
+                "[SolidifiedBodyRenderer] Skipped " + rejectedComponentCount +
+                " invalid or non-manifold shadow contour component(s). Valid closed contours were retained.");
         }
 
         boundaryVertices = resultVertices.ToArray();
         boundaryIndices = resultIndices.ToArray();
     }
 
-    private static int GetOrAddBoundaryVertex(
-        Vector2 point,
-        List<Vector2> vertices,
-        Dictionary<OutlinePointKey, int> vertexIndexLookup)
+    private static void AddAdjacentEdge(
+        Dictionary<OutlinePointKey, List<int>> adjacency,
+        OutlinePointKey pointKey,
+        int edgeIndex)
     {
-        OutlinePointKey key = new OutlinePointKey(point);
-
-        if (vertexIndexLookup.TryGetValue(key, out int existingIndex))
-            return existingIndex;
-
-        int newIndex = vertices.Count;
-        vertices.Add(point);
-        vertexIndexLookup.Add(key, newIndex);
-        return newIndex;
-    }
-
-    private static int FindFirstPointWithXAtLeast(List<Vector2> points, float minimumX)
-    {
-        int low = 0;
-        int high = points.Count;
-
-        while (low < high)
+        if (!adjacency.TryGetValue(pointKey, out List<int> connectedEdges))
         {
-            int middle = low + (high - low) / 2;
-
-            if (points[middle].x < minimumX)
-                low = middle + 1;
-            else
-                high = middle;
+            connectedEdges = new List<int>(2);
+            adjacency.Add(pointKey, connectedEdges);
         }
 
-        return low;
+        connectedEdges.Add(edgeIndex);
+    }
+
+    private static void AddConnectedEdgesToQueue(
+        OutlinePointKey pointKey,
+        Dictionary<OutlinePointKey, List<int>> adjacency,
+        bool[] componentVisited,
+        Queue<int> pendingEdges)
+    {
+        if (!adjacency.TryGetValue(pointKey, out List<int> connectedEdges))
+            return;
+
+        for (int i = 0; i < connectedEdges.Count; i++)
+        {
+            int connectedEdgeIndex = connectedEdges[i];
+
+            if (componentVisited[connectedEdgeIndex])
+                continue;
+
+            componentVisited[connectedEdgeIndex] = true;
+            pendingEdges.Enqueue(connectedEdgeIndex);
+        }
     }
 
     private static Vector2 GetOrAddOutlinePoint(
@@ -537,30 +650,114 @@ public sealed class SolidifiedBodyRenderer : MonoBehaviour
         return point;
     }
 
+    /// <summary>
+    /// Returns the first index whose point.x is greater than or equal to the
+    /// requested value. The input list must already be sorted by x ascending.
+    /// </summary>
+    private static int FindFirstPointWithXAtLeast(List<Vector2> sortedPoints, float minimumX)
+    {
+        int low = 0;
+        int high = sortedPoints.Count;
+
+        while (low < high)
+        {
+            int middle = low + (high - low) / 2;
+
+            if (sortedPoints[middle].x < minimumX)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
+    }
+
+    /// <summary>
+    /// Calculates the signed shoelace area. Positive values indicate
+    /// counter-clockwise winding in Unity's usual XY coordinate system.
+    /// </summary>
     private static float CalculateSignedArea(Vector2[] polygon)
     {
-        float twiceArea = 0f;
+        if (polygon == null || polygon.Length < 3)
+            return 0f;
+
+        double twiceArea = 0d;
 
         for (int i = 0; i < polygon.Length; i++)
         {
             Vector2 current = polygon[i];
             Vector2 next = polygon[(i + 1) % polygon.Length];
-            twiceArea += current.x * next.y - next.x * current.y;
+            twiceArea += (double)current.x * next.y - (double)next.x * current.y;
         }
 
-        return twiceArea * 0.5f;
+        return (float)(twiceArea * 0.5d);
     }
 
-    private void OnDestroy()
+    private static bool TryTraceBoundaryLoop(
+        int firstEdgeIndex,
+        int expectedEdgeCount,
+        List<OutlineSegment> edges,
+        Dictionary<OutlinePointKey, List<int>> adjacency,
+        List<Vector2> loop)
     {
-        if (ownedMesh == null)
-            return;
+        loop.Clear();
 
-        if (Application.isPlaying)
-            UnityEngine.Object.Destroy(ownedMesh);
-        else
-            UnityEngine.Object.DestroyImmediate(ownedMesh);
+        OutlineSegment firstEdge = edges[firstEdgeIndex];
+        OutlinePointKey startKey = new OutlinePointKey(firstEdge.start);
+        OutlinePointKey currentKey = startKey;
+        int currentEdgeIndex = firstEdgeIndex;
+        HashSet<int> usedEdges = new HashSet<int>();
 
-        ownedMesh = null;
+        loop.Add(firstEdge.start);
+
+        while (usedEdges.Count < expectedEdgeCount)
+        {
+            if (!usedEdges.Add(currentEdgeIndex))
+                return false;
+
+            OutlineSegment currentEdge = edges[currentEdgeIndex];
+            OutlinePointKey edgeStartKey = new OutlinePointKey(currentEdge.start);
+            OutlinePointKey edgeEndKey = new OutlinePointKey(currentEdge.end);
+
+            OutlinePointKey nextKey;
+            Vector2 nextPoint;
+
+            if (currentKey.Equals(edgeStartKey))
+            {
+                nextKey = edgeEndKey;
+                nextPoint = currentEdge.end;
+            }
+            else if (currentKey.Equals(edgeEndKey))
+            {
+                nextKey = edgeStartKey;
+                nextPoint = currentEdge.start;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (nextKey.Equals(startKey))
+                return usedEdges.Count == expectedEdgeCount && loop.Count >= 3;
+
+            loop.Add(nextPoint);
+
+            if (!adjacency.TryGetValue(nextKey, out List<int> connectedEdges) ||
+                connectedEdges.Count != 2)
+            {
+                return false;
+            }
+
+            int nextEdgeIndex = connectedEdges[0] == currentEdgeIndex
+                ? connectedEdges[1]
+                : connectedEdges[0];
+
+            currentKey = nextKey;
+            currentEdgeIndex = nextEdgeIndex;
+        }
+
+        return false;
     }
 }
+
+
