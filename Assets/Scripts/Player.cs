@@ -1,3 +1,4 @@
+
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
@@ -97,7 +98,18 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
                 particle.Destroy();
                 continue;
             }
-            particle.callbackTarget = this;
+
+            particle.SetContactEvents(true);
+
+            using (NativeArray<PhysicsShape> shapes = particle.GetShapes())
+            {
+                for (int shapeIndex = 0; shapeIndex < shapes.Length; shapeIndex++)
+                {
+                    PhysicsShape shape = shapes[shapeIndex];
+                    shape.callbackTarget = this;
+                }
+            }
+
             particles.Add(particle);
         }
     }
@@ -107,18 +119,21 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         if (state == State.Solid || particles.Count < 3)
             return;
 
-        List<PhysicsBody> results = ParticleSolidifier.Solidify(particles, sim, 1f,boundaryPadding,null,"Terrain");
+        List<PhysicsBody> results = ParticleSolidifier.Solidify(
+            particles, sim, 1f, boundaryPadding, null, "Terrain");
+
         if (results == null || results.Count == 0)
             return;
 
         PhysicsBody result = results[0];
         int numberofshapes = result.shapeCount;
+
         for (int i = 1; i < results.Count; i++)
         {
             if (results[i].shapeCount > numberofshapes)
             {
                 result = results[i];
-                numberofshapes = result.shapeCount;
+                numberofshapes = results[i].shapeCount;
             }
         }
 
@@ -136,12 +151,14 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         if (state != State.Solid || !solidifiedBody.isValid)
             return;
 
-        List<PhysicsBody> restoredParticles = ParticleSolidifier.Liquify(solidifiedBody);
+        List<PhysicsBody> restoredParticles =
+            ParticleSolidifier.Liquify(solidifiedBody);
 
         if (restoredParticles.Count == 0)
             return;
 
         particles = restoredParticles;
+
         solidifiedBody = default;
         solidifiedParticleCount = 0;
         state = State.Liquid;
@@ -166,10 +183,10 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
             return;
         }
 
-        if (state == State.Liquid || !(particles.Count == 0)) LiquidMovement();
-
-        
+        if (state == State.Liquid || !(particles.Count == 0))
+            LiquidMovement();
     }
+
     void LiquidMovement()
     {
         Vector2 center = Vector2.zero;
@@ -199,6 +216,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
                 continue;
 
             float distance = Vector2.Distance(particle.position, moveCenter);
+
             Vector2 force =
                 (moveCenter - particle.position).normalized *
                 liquidBaseForce *
@@ -206,11 +224,13 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
             particle.ApplyForce(force, particle.worldCenterOfMass);
         }
-        
-        List<List<PhysicsBody>> results = ParticleBlobPartitioner.PartitionBlobs(particles.ToArray(),1);
+
+        List<List<PhysicsBody>> results =
+            ParticleBlobPartitioner.PartitionBlobs(particles.ToArray(), 1);
 
         List<PhysicsBody> result = results[0];
         int numberofshapes = result.Count;
+
         for (int i = 1; i < results.Count; i++)
         {
             if (results[i].Count > numberofshapes)
@@ -219,6 +239,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
                 numberofshapes = result.Count;
             }
         }
+
         particles = result;
     }
 
@@ -228,11 +249,13 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
             return;
 
         Vector2 center = solidifiedBody.worldCenterOfMass;
+
         Vector2 moveCenter = center;
         moveCenter += baseOffset;
         moveCenter += PIR.instance.move.ReadValue<Vector2>().normalized * moveForce;
 
         float distance = Vector2.Distance(center, moveCenter);
+
         Vector2 force =
             (moveCenter - center).normalized *
             liquidBaseForce *
@@ -247,23 +270,66 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         if (solidifiedBody.isValid)
             ParticleSolidifier.DestroySolidifiedBody(solidifiedBody);
     }
+
     void OnDrawGizmos()
     {
-        if (Application.isPlaying == true) if(solidifiedBody!= null) Gizmos.DrawCube(solidifiedBody.position,Vector3.one*0.3f);
+        if (Application.isPlaying == true)
+            if (solidifiedBody != null)
+                Gizmos.DrawCube(solidifiedBody.position, Vector3.one * 0.3f);
     }
 
-    public void OnContactBegin2D(PhysicsEvents.ContactBeginEvent beginEvent)
+    // --------------------------------------------------
+    // PARTICLE ABSORPTION
+    // --------------------------------------------------
+
+    private void TryAbsorbParticle(
+        PhysicsBody playerParticle,
+        PhysicsBody hitParticle)
     {
-        Debug.Log("contact");
-        if( sim.GetParticleType(beginEvent.shapeA.body ) == 1 & !particles.Contains(beginEvent.shapeA.body))
-        {
-            particles.Add(beginEvent.shapeA.body);
-            Debug.Log("Added Particle");
-        }
+        if (!playerParticle.isValid || !hitParticle.isValid)
+            return;
+
+        if (particles.Contains(hitParticle))
+            return;
+
+        int playerType = sim.GetParticleType(playerParticle);
+        int hitType = sim.GetParticleType(hitParticle);
+
+        if (playerType < 0 || hitType < 0 || playerType != hitType)
+            return;
+
+        hitParticle.callbackTarget = this;
+        particles.Add(hitParticle);
+
+        Debug.Log(
+            "[Player] Absorbed particle. Total: " + particles.Count);
     }
 
-    public void OnContactEnd2D(PhysicsEvents.ContactEndEvent endEvent)
+    public void OnContactBegin2D(
+        PhysicsEvents.ContactBeginEvent beginEvent)
     {
-        //throw new System.NotImplementedException();
+        // Absorption only works in liquid form.
+        if (sim == null || state != State.Liquid || particles.Count == 0)
+            return;
+
+        PhysicsBody bodyA = beginEvent.shapeA.body;
+        PhysicsBody bodyB = beginEvent.shapeB.body;
+
+        bool aBelongsToPlayer = particles.Contains(bodyA);
+        bool bBelongsToPlayer = particles.Contains(bodyB);
+
+        // Neither belongs to the player, or both already belong.
+        if (aBelongsToPlayer == bBelongsToPlayer)
+            return;
+
+        if (aBelongsToPlayer)
+            TryAbsorbParticle(bodyA, bodyB);
+        else
+            TryAbsorbParticle(bodyB, bodyA);
+    }
+
+    public void OnContactEnd2D(
+        PhysicsEvents.ContactEndEvent endEvent)
+    {
     }
 }
