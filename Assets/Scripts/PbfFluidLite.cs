@@ -110,6 +110,7 @@ public class PbfFluidLite : MonoBehaviour
     [Header("Debug")]
     public bool showParticlesViaPhysicsDraw = true;
     public bool showLogs = false;
+    public bool drawGrid = false; 
 
     [Header("Diagnostics (written by the sim, read-only)")]
     public bool updateDiagnostics = true;
@@ -1011,6 +1012,7 @@ public class PbfFluidLite : MonoBehaviour
     // ================================================================== gizmos
     void DrawGridLines()
     {
+        if(drawGrid){
         int cols = Mathf.Max(1, gridColumns), rows = Mathf.Max(1, gridRows);
         float cs = EffectiveSmoothing;
         Vector2 min = gridOrigin;
@@ -1025,6 +1027,7 @@ public class PbfFluidLite : MonoBehaviour
         { float x = min.x + i * cs; Gizmos.DrawLine(new Vector3(x, min.y, 0f), new Vector3(x, max.y, 0f)); }
         for (int i = 1; i < rows && i < 200; i++)
         { float y = min.y + i * cs; Gizmos.DrawLine(new Vector3(min.x, y, 0f), new Vector3(max.x, y, 0f)); }
+        }
     }
     void OnDrawGizmos() { if (!showGridGizmo || !drawGridWhenUnselected) return; DrawGridLines(); }
     void OnDrawGizmosSelected() { if (!showGridGizmo) return; DrawGridLines(); }

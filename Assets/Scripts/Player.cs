@@ -45,8 +45,16 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
     public float moveForce = 0f;
     public float maxForceDistance = 1.5f;
 
+    [Header("Solidified Shape Properties")]
+    [Tooltip("Density applied to every generated polygon shape. Higher density increases the solidified body's mass.")]
+    [Min(0.01f)]
+    public float solidDensity = 5f;
+    [Tooltip("Friction coefficient applied to every generated polygon shape. 0 = slippery, 1 = high friction.")]
+    [Range(0f, 1f)]
+    public float solidFriction = 0.9f;
+
     [Header("Solid Movement")]
-    [Tooltip("Continuous torque applied while pressing left or right. Tune this for the mass/inertia of the solidified body.")]
+    [Tooltip("Base torque multiplier. The actual torque is this value multiplied by the solidified body's final mass.")]
     [Min(0f)]
     public float solidTorque = 20f;
 
@@ -164,7 +172,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
             return;
 
         solidifiedBody = result;
-        solidifiedBody.type = PhysicsBody.BodyType.Dynamic;
+        ApplySolidifiedShapeProperties();
         solidifiedParticleCount = solidifiedBody.shapeCount;
         particles.Clear();
         playerParticleSet.Clear();
@@ -297,8 +305,37 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         // Horizontal input spins the solidified body; contacts with the ground
         // or other geometry convert that rotation into rolling movement.
         float horizontalInput = PIR.instance.move.ReadValue<Vector2>().x;
-        if (Mathf.Abs(horizontalInput) > 0.001f && solidTorque > 0f)
-            solidifiedBody.ApplyTorque(-horizontalInput * solidTorque);
+        float bodyMass = Mathf.Max(0f, solidifiedBody.mass);
+        float torque = -horizontalInput * solidTorque * bodyMass;
+
+        if (Mathf.Abs(horizontalInput) > 0.001f && torque != 0f)
+            solidifiedBody.ApplyTorque(torque);
+    }
+
+    private void ApplySolidifiedShapeProperties()
+    {
+        if (!solidifiedBody.isValid)
+            return;
+
+        float density = Mathf.Max(0.01f, solidDensity);
+        float friction = Mathf.Clamp01(solidFriction);
+
+        using (NativeArray<PhysicsShape> shapes = solidifiedBody.GetShapes())
+        {
+            for (int i = 0; i < shapes.Length; i++)
+            {
+                PhysicsShape shape = shapes[i];
+                if (!shape.isValid)
+                    continue;
+
+                // Defer the mass recalculation until every shape has its new density.
+                shape.SetDensity(density, false);
+                shape.friction = friction;
+            }
+        }
+
+        // Recalculate once after updating all shapes so torque uses the final mass.
+        solidifiedBody.ApplyMassFromShapes();
     }
 
     private void CheckForNearbyParticles()
