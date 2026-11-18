@@ -176,6 +176,7 @@ public class PbfFluidLite : MonoBehaviour
     int stepCounter;
     bool destroyed;   // set in OnDestroy: other scripts may still call us during scene teardown
     float gridMinX, gridMinY, gridMaxX, gridMaxY;
+    bool gridBuilt; // True only after the latest PBF grid build has completed.
 
     // ------------------------------------------------------------------ metaballs (BenchMark parity)
     private Vector3[] _metaballData;
@@ -197,6 +198,7 @@ public class PbfFluidLite : MonoBehaviour
         int t = ClampType(typeId);
         // Already registered: only the type changes. (Re-reading gravityScale here would capture OUR value.)
         if (indexOf.TryGetValue(body, out int existing)) { nType[existing] = t; return; }
+        gridBuilt = false;
         EnsureCapacity(count + 1);
         int i = count++;
         float gs = body.gravityScale;
@@ -252,6 +254,7 @@ public class PbfFluidLite : MonoBehaviour
     public void ClearParticles()
     {
         RestoreGravityScales();
+        gridBuilt = false;
         indexOf.Clear(); simPoses.Clear(); manualPoses.Clear();
         for (int i = 0; i < count; i++) bodies[i] = default;
         count = 0; massSum = 0f;
@@ -261,6 +264,91 @@ public class PbfFluidLite : MonoBehaviour
     public int GetParticleType(PhysicsBody body)
     {
         return indexOf.TryGetValue(body, out int i) ? nType[i] : ClampType(defaultType);
+    }
+
+    /// <summary>
+    /// Adds registered particles of the requested type whose CURRENT body positions
+    /// are inside radius of center. Candidate lookup uses the grid built by the PBF
+    /// jobs, then performs an exact distance check against PhysicsBody.position.
+    /// The extra cell of search padding compensates for the grid being one fixed
+    /// simulation pass old when queried by an earlier FixedUpdate script.
+    /// The caller owns and can reuse the results list.
+    /// </summary>
+    public void QueryParticlesInRange(Vector2 center, float radius, int particleType, List<PhysicsBody> results)
+    {
+        if (results == null)
+            return;
+
+        results.Clear();
+
+        if (destroyed || !gridBuilt || count == 0 ||
+            !nCellStart.IsCreated || !nCellItems.IsCreated || !nType.IsCreated)
+            return;
+
+        int cols = Mathf.Max(1, gridColumns);
+        int rows = Mathf.Max(1, gridRows);
+        int totalCells = cols * rows;
+
+        if (nCellStart.Length < totalCells + 1)
+            return;
+
+        float cellSize = EffectiveSmoothing;
+        if (cellSize <= 0f)
+            return;
+
+        radius = Mathf.Max(0f, radius);
+        float radiusSquared = radius * radius;
+
+        // PbfFluidLite runs after ordinary FixedUpdate scripts. Search one extra
+        // cell in each direction so a body that crossed a cell boundary since
+        // the previous build is still considered. Exact range is checked below.
+        float searchRadius = radius + cellSize;
+        float minX = center.x - searchRadius;
+        float maxX = center.x + searchRadius;
+        float minY = center.y - searchRadius;
+        float maxY = center.y + searchRadius;
+
+        // The simulation clamps out-of-grid particles into border cells, so
+        // even a query outside the grid must inspect the corresponding border cell.
+
+        int minCellX = Mathf.Clamp(Mathf.FloorToInt((minX - gridOrigin.x) / cellSize), 0, cols - 1);
+        int maxCellX = Mathf.Clamp(Mathf.FloorToInt((maxX - gridOrigin.x) / cellSize), 0, cols - 1);
+        int minCellY = Mathf.Clamp(Mathf.FloorToInt((minY - gridOrigin.y) / cellSize), 0, rows - 1);
+        int maxCellY = Mathf.Clamp(Mathf.FloorToInt((maxY - gridOrigin.y) / cellSize), 0, rows - 1);
+
+        int requiredType = ClampType(particleType);
+
+        // Cell ids use the same row-major layout as the PBF grid jobs:
+        // cell = y * columns + x. cellStart describes [start, end) in cellItems.
+        for (int cellY = minCellY; cellY <= maxCellY; cellY++)
+        {
+            int rowOffset = cellY * cols;
+
+            for (int cellX = minCellX; cellX <= maxCellX; cellX++)
+            {
+                int cell = rowOffset + cellX;
+                int start = Mathf.Clamp(nCellStart[cell], 0, nCellItems.Length);
+                int end = Mathf.Clamp(nCellStart[cell + 1], start, nCellItems.Length);
+
+                for (int item = start; item < end; item++)
+                {
+                    int particleIndex = nCellItems[item];
+                    if (particleIndex < 0 || particleIndex >= count)
+                        continue;
+
+                    if (nType[particleIndex] != requiredType)
+                        continue;
+
+                    PhysicsBody candidate = bodies[particleIndex];
+                    if (!candidate.isValid)
+                        continue;
+
+                    Vector2 offset = candidate.position - center;
+                    if (offset.sqrMagnitude <= radiusSquared)
+                        results.Add(candidate);
+                }
+            }
+        }
     }
 
     public int ClampType(int t)
@@ -310,9 +398,9 @@ public class PbfFluidLite : MonoBehaviour
     }
 
     // ================================================================== lifecycle
-    void OnEnable() { SyncFromList(); ApplyDrawOptions(); }
+    void OnEnable() { gridBuilt = false; SyncFromList(); ApplyDrawOptions(); }
 
-    void OnDisable() { RestoreGravityScales(); }
+    void OnDisable() { gridBuilt = false; RestoreGravityScales(); }
 
     void LateUpdate()
     {
@@ -325,6 +413,7 @@ public class PbfFluidLite : MonoBehaviour
         // During scene teardown other scripts (e.g. the spawner's OnDestroy) can still call RemoveParticle, in either
         // order. Empty the registry FIRST so those calls find nothing to touch, then free the native arrays.
         destroyed = true;
+        gridBuilt = false;
         indexOf.Clear();
         simPoses.Clear();
         for (int i = 0; i < count; i++) bodies[i] = default;
@@ -521,6 +610,7 @@ public class PbfFluidLite : MonoBehaviour
             diagOutsideGrid = outside;
         }
         diagStepMs = (float)stepWatch.Elapsed.TotalMilliseconds;
+        gridBuilt = nCellStart.IsCreated && nCellItems.IsCreated;
         if (showLogs && (stepCounter % 100) == 0)
             Debug.Log($"[PbfFluidLite] n={n} {(par ? "jobs" : "main-thread burst")} avg rho/rho0={diagAvgDensityRatio:F2} " +
                       $"compressed={diagCompressed} outsideGrid={diagOutsideGrid} cost={diagStepMs:F2} ms");
@@ -611,6 +701,7 @@ public class PbfFluidLite : MonoBehaviour
 
     void RemoveAt(int i, bool restoreGravity)
     {
+        gridBuilt = false;
         PhysicsBody b = bodies[i];
         if (restoreGravity && b.isValid) b.gravityScale = baseGs[i];
         indexOf.Remove(b);
