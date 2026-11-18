@@ -32,6 +32,11 @@ public sealed class ParticleSolidifierSnapshot : ScriptableObject
     // Mass/density overrides.
     public float mass;
     public float density;
+
+    // Final visual polygons in solid-body local space. Every polygon in this
+    // list belongs to this original particle, so they all use particleColor.
+    public Color particleColor = Color.white;
+    public List<Vector2[]> renderPolygons = new List<Vector2[]>();
 }
 
 /// <summary>
@@ -43,6 +48,9 @@ public sealed class ParticleSolidifierSnapshot : ScriptableObject
 public sealed class ParticleSolidifierManifest : ScriptableObject
 {
     public List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>();
+
+    // Runtime visual representation associated with this compound body.
+    public SolidifiedBodyRenderer renderer;
 }
 
 /// <summary>
@@ -374,6 +382,10 @@ public static class ParticleSolidifier
         PhysicsBody solidBody = default;
         ParticleSolidifierManifest manifest = null;
         List<ParticleSolidifierSnapshot> snapshots = new List<ParticleSolidifierSnapshot>(inputs.Count);
+        SolidifiedParticleRenderConfig renderConfig = SolidifiedParticleRenderConfig.Instance;
+        bool storeVisualGeometry = renderConfig != null &&
+            renderConfig.RenderSolidifiedBodies &&
+            renderConfig.RenderMaterial != null;
         int createdShapeCount = 0;
 
         try
@@ -414,6 +426,23 @@ public static class ParticleSolidifier
                 snapshot.fluidTypeId = input.fluidTypeId;
                 snapshot.mass = input.mass;
                 snapshot.density = input.density;
+                snapshot.particleColor = storeVisualGeometry
+                    ? renderConfig.GenerateParticleColor()
+                    : Color.white;
+
+                // Preserve all final fragments produced for this particle.
+                // This is deliberately stored on the particle snapshot rather
+                // than on each physics shape, keeping fragment colors identical.
+                if (storeVisualGeometry)
+                {
+                    for (int renderPolygonIndex = 0;
+                        renderPolygonIndex < cellGeometry[i].polygons.Count;
+                        renderPolygonIndex++)
+                    {
+                        snapshot.renderPolygons.Add(
+                            CopyPolygonVertices(cellGeometry[i].polygons[renderPolygonIndex]));
+                    }
+                }
 
                 snapshots.Add(snapshot);
                 manifest.snapshots.Add(snapshot);
@@ -520,12 +549,49 @@ public static class ParticleSolidifier
 
         PhysicsWorld.DestroyBodyBatch(sourceBodyArray);
 
+        if (renderConfig != null && renderConfig.RenderSolidifiedBodies)
+        {
+            if (renderConfig.RenderMaterial == null)
+            {
+                Debug.LogWarning(
+                    "[ParticleSolidifier] Solidified particle rendering is enabled, but no material is assigned.",
+                    renderConfig);
+            }
+            else
+            {
+                try
+                {
+                    manifest.renderer = SolidifiedBodyRenderer.Create(
+                        solidBody,
+                        manifest,
+                        renderConfig);
+                }
+                catch (Exception renderException)
+                {
+                    Debug.LogError(
+                        "[ParticleSolidifier] Physics solidification succeeded, but visual mesh creation failed.");
+                    Debug.LogException(renderException);
+                }
+            }
+        }
+
         Debug.Log(
             "[ParticleSolidifier] Solidified " + inputs.Count +
             " particles into one body using " + totalOutputShapes +
             " convex shapes across " + totalIslands + " geometry islands.");
 
         return solidBody;
+    }
+
+    private static Vector2[] CopyPolygonVertices(PolygonGeometry polygon)
+    {
+        int vertexCount = polygon.count;
+        Vector2[] copiedVertices = new Vector2[vertexCount];
+
+        for (int i = 0; i < vertexCount; i++)
+            copiedVertices[i] = polygon.vertices[i];
+
+        return copiedVertices;
     }
 
     private static CellGeometry ComposeCellGeometry(
@@ -1016,8 +1082,13 @@ public static class ParticleSolidifier
 
     private static void DestroyManifest(ParticleSolidifierManifest manifest)
     {
-        if (manifest != null)
-            UnityEngine.Object.Destroy(manifest);
+        if (manifest == null)
+            return;
+
+        if (manifest.renderer != null)
+            UnityEngine.Object.Destroy(manifest.renderer.gameObject);
+
+        UnityEngine.Object.Destroy(manifest);
     }
 
     // ---------------------------------------------------------------------
