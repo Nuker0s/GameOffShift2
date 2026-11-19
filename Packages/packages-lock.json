@@ -1,5 +1,12 @@
 {
   "dependencies": {
+    "com.exppad.bmesh-unity": {
+      "version": "https://github.com/eliemichel/BMeshUnity.git",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "448252f7c336bb57283800feeb786b943f32821a"
+    },
     "com.unity.2d.animation": {
       "version": "17.0.3",
       "depth": 0,

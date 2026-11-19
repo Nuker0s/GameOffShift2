@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "com.exppad.bmesh-unity": "https://github.com/eliemichel/BMeshUnity.git",
     "com.unity.2d.animation": "17.0.3",
     "com.unity.2d.aseprite": "7.0.2",
     "com.unity.2d.physics": "1.1.0",
