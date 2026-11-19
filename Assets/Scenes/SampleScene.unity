@@ -204,7 +204,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -595,7 +595,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -1088,7 +1088,7 @@ Camera:
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 2
-  m_BackGroundColor: {r: 0.25490198, g: 0.29411766, b: 0.3019608, a: 1}
+  m_BackGroundColor: {r: 0.18039216, g: 0.16862746, b: 0.19607845, a: 1}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -1440,7 +1440,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -1831,7 +1831,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -2059,7 +2059,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -2946,7 +2946,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -3500,7 +3500,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -3672,7 +3672,7 @@ Transform:
   m_GameObject: {fileID: 1196447261}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0, z: -0.00087833655, w: 0.99999964}
-  m_LocalPosition: {x: -33.57, y: -3.13, z: 0}
+  m_LocalPosition: {x: -12.66, y: 3.34, z: 0}
   m_LocalScale: {x: 3, y: 3, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -3861,7 +3861,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -4323,7 +4323,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -4589,7 +4589,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Player
   sim: {fileID: 936009783}
   body: {fileID: 0}
-  initalParticleCount: 50
+  initalParticleCount: 25
   state: 0
   spawner: {fileID: 936009785}
   spiralCenter: {x: 0, y: 0}
@@ -4600,7 +4600,7 @@ MonoBehaviour:
   baseOffset: {x: 0, y: 0.5}
   moveForce: 0.5
   maxForceDistance: 1.5
-  solidDensity: 10
+  solidDensity: 1
   solidFriction: 1
   solidTorque: 15
   absorptionRange: 0.5
@@ -4718,6 +4718,8 @@ GameObject:
   - component: {fileID: 1802858646}
   - component: {fileID: 1802858645}
   - component: {fileID: 1802858648}
+  - component: {fileID: 1802858649}
+  - component: {fileID: 1802858650}
   m_Layer: 6
   m_Name: Square (7)
   m_TagString: Untagged
@@ -4733,13 +4735,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1802858643}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: -0.18223555, w: 0.9832549}
-  m_LocalPosition: {x: -33.7, y: 2.57, z: 0}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: -38.58, y: -1.1599998, z: 0}
   m_LocalScale: {x: 1, y: 8.5, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 1264070959}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: -21}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!212 &1802858645
 SpriteRenderer:
   serializedVersion: 3
@@ -4790,7 +4792,7 @@ SpriteRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_Sprite: {fileID: 7482667652216324306, guid: 311925a002f4447b3a28927169b83ea6, type: 3}
-  m_Color: {r: 0.13725491, g: 0.17254902, b: 0.16862746, a: 1}
+  m_Color: {r: 0.36291468, g: 0.366155, b: 0.41799998, a: 1}
   m_FlipX: 0
   m_FlipY: 0
   m_DrawMode: 0
@@ -4831,8 +4833,8 @@ MonoBehaviour:
   m_CallbackTarget: {fileID: 0}
   m_DefinitionAsset: {fileID: 0}
   m_Definition:
-    m_BodyType: 1
-    m_BodyConstraints: 0
+    m_BodyType: 0
+    m_BodyConstraints: 3
     m_TransformWriteMode: 1
     m_Position: {x: 0, y: 0}
     m_Rotation:
@@ -4853,7 +4855,7 @@ MonoBehaviour:
     m_WorldDrawing: 1
     m_MassOverride: 0
     m_MassConfiguration:
-      m_Mass: 1
+      m_Mass: 300
       m_Center: {x: 0, y: 0}
       m_RotationalInertia: 1
     m_DrawTarget: 0
@@ -5096,6 +5098,120 @@ MonoBehaviour:
         m_SelectedHashCode: 0
         m_SelectedSource:
           rid: -2
+--- !u!114 &1802858649
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1802858643}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 58ab41ac38230ba44988045d694ee661, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PhysicsCore2DRotationCycle
+  mode: 1
+  cycle:
+  - {x: 90, y: 3}
+  - {x: -90, y: 3}
+  positiveXIsClockwise: 1
+  paused: 0
+  automaticFixedUpdate: 1
+  physicsPose: {fileID: 0}
+  maxKinematicAngularVelocity: 720
+  positionGain: 4
+  velocityGain: 5
+  integralGain: 0.1
+  integralLimit: 500
+  maxTorque: 550
+  maxReferenceAngularVelocity: 720
+  torqueSnapAngleTolerance: 0.1
+  torqueSnapVelocityTolerance: 0.5
+--- !u!114 &1802858650
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1802858643}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2c79862b9e6459045a7d5c56265ea844, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.U2D.Physics::Unity.U2D.Physics.PhysicsAreaCircle
+  m_Source: 0
+  m_Pose: {fileID: 1802858646}
+  m_Transformation:
+    m_Transform:
+      position: {x: 2.1543884, y: -0.41304183}
+      rotation:
+        direction: {x: 1, y: 0}
+    m_Scale: 1
+    m_ScaleRadius: 1
+  m_UserData:
+    m_EntityId:
+      m_rawData: 0
+    m_PhysicsMask:
+      bitMask: 0
+    m_Float: 0
+    m_Int: 0
+    m_Int64: 0
+    m_Vector3Int: {x: 0, y: 0, z: 0}
+    m_Bool: 0
+  m_CallbackSource: 0
+  m_CallbackTarget: {fileID: 0}
+  m_AreasOnly: 1
+  m_DefinitionAsset: {fileID: 0}
+  m_Definition:
+    contactFilter:
+      m_Categories:
+        bitMask: 1
+      m_Contacts:
+        bitMask: 18446744073709551615
+      m_GroupIndex: 0
+    surfaceMaterial:
+      m_Friction: 0.6
+      m_Bounciness: 0
+      m_FrictionMixing: 1
+      m_BouncinessMixing: 4
+      m_FrictionPriority: 0
+      m_BouncinessPriority: 0
+      m_RollingResistance: 0
+      m_TangentSpeed: 0
+      m_CustomColor:
+        serializedVersion: 2
+        rgba: 0
+    m_Density: 1
+    m_IsTrigger: 0
+    m_TriggerEvents: 0
+    m_ContactEvents: 0
+    m_HitEvents: 0
+    m_ContactFilterCallbacks: 0
+    m_PreContactCallbacks: 0
+    m_StartStaticContacts: 1
+    m_StartMassUpdate: 1
+    m_WorldDrawing: 1
+    moverData:
+      m_PushLimit: 1000000
+      m_ClipVelocity: 1
+  m_ContactAsset: {fileID: 0}
+  m_MaterialAsset: {fileID: 0}
+  onContactBegin:
+    m_PersistentCalls:
+      m_Calls: []
+  onContactEnd:
+    m_PersistentCalls:
+      m_Calls: []
+  onTriggerBegin:
+    m_PersistentCalls:
+      m_Calls: []
+  onTriggerEnd:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Geometry:
+    m_Center: {x: -2.15, y: -0.01}
+    m_Radius: 0.1
+  m_GeometryAsset: {fileID: 0}
 --- !u!1 &1836580602
 GameObject:
   m_ObjectHideFlags: 0
@@ -5307,7 +5423,7 @@ Transform:
   m_GameObject: {fileID: 1980065236}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: -0.49392515, w: 0.86950445}
-  m_LocalPosition: {x: -45.56, y: -20.11, z: 0}
+  m_LocalPosition: {x: -42.7, y: -15.09, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
