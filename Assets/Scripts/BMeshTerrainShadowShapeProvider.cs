@@ -8,14 +8,16 @@ using UnityEngine.Rendering.Universal;
 /// Select "BMesh Terrain" in the ShadowCaster2D Casting Source dropdown.
 ///
 /// BMeshTerrain2D.GeneratedOutline is stored in terrain-local coordinates.
-/// This provider passes those local vertices to ShadowShape2D together with
-/// the terrain local-to-world matrix, so the transform is applied exactly once.
+/// ShadowCaster2D applies the GameObject transform itself at render time
+/// (like MeshFilter/MeshRenderer do), so this provider passes those local
+/// vertices with Matrix4x4.identity. Passing localToWorldMatrix here would
+/// apply the transform twice, offsetting the shadow by the GameObject
+/// position (worse the further the object is from the world origin).
 /// </summary>
 [Serializable]
 public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
 {
     [NonSerialized] private int lastAppliedGeneration = int.MinValue;
-    [NonSerialized] private Matrix4x4 lastAppliedTransform;
     [NonSerialized] private bool hasAppliedShape;
 
     public override GUIContent ProviderName(string componentName)
@@ -58,13 +60,11 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
         if (outline == null || outline.Count < 3)
             return;
 
-        Matrix4x4 currentTransform = terrain.transform.localToWorldMatrix;
         int currentGeneration = terrain.GenerationVersion;
 
         if (!force &&
             hasAppliedShape &&
-            currentGeneration == lastAppliedGeneration &&
-            currentTransform.Equals(lastAppliedTransform))
+            currentGeneration == lastAppliedGeneration)
         {
             return;
         }
@@ -100,12 +100,14 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
                 indices[i * 2 + 1] = (i + 1) % pointCount;
             }
 
-            // Supply the transform separately so URP applies it once.
+            // Keep the shape in terrain-local space with identity. ShadowCaster2D
+            // applies the GameObject transform at render time, so passing
+            // localToWorldMatrix here would move/rotate/scale it twice.
             shadowShape.SetShape(
                 vertices,
                 indices,
                 radii,
-                currentTransform,
+                Matrix4x4.identity,
                 ShadowShape2D.WindingOrder.CounterClockwise,
                 true,
                 true
@@ -124,7 +126,6 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
         }
 
         lastAppliedGeneration = currentGeneration;
-        lastAppliedTransform = currentTransform;
         hasAppliedShape = true;
     }
 }
