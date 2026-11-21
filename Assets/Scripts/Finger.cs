@@ -28,6 +28,9 @@ public class Finger : MonoBehaviour
     Transform cameraTransform;
     Camera cachedCamera;
 
+    public bool freecamera = false;
+    public Vector2 PlayerCenter;
+
     void Awake()
     {
         CacheCamera();
@@ -75,6 +78,7 @@ public class Finger : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
+        if (freecamera){
         if (cameraTransform == null)
         {
             CacheCamera();
@@ -171,6 +175,7 @@ public class Finger : MonoBehaviour
         }
 
         cameraTransform.position = pos;
+        }
     }
 
     void OnValidate()

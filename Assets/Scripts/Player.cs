@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
 using Unity.U2D.Physics;
+using UnityEngine.InputSystem;
 
 public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 {
@@ -65,10 +66,31 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
     [Tooltip("How often to query the simulation grid while liquid. 15 checks/sec is a good starting point.")]
     [Range(1f, 30f)]
     public float absorptionChecksPerSecond = 15f;
+    public Transform cameraTarget;
+    Vector2 playerCenter;
+    public float maxCameraOffset = 5;
 
+    public void CameraTargetAligment()
+    {
+        Camera mainCamera = Camera.main;
+
+        Vector3 screenMousePosition = Mouse.current.position.ReadValue();
+        screenMousePosition.z = 0;
+
+        Vector2 mousepos = mainCamera.ScreenToWorldPoint(screenMousePosition);
+
+        Vector2 mid = (playerCenter + mousepos) / 2f;
+
+        float distance = Vector2.Distance(mid, playerCenter);
+        distance = Mathf.Clamp(distance, 0f, maxCameraOffset);
+
+        Vector2 dir = (mid - playerCenter).normalized;
+
+        cameraTarget.position = playerCenter + (dir * distance);
+    }
     private void Start()
     {
-        Application.targetFrameRate = 240;
+        Application.targetFrameRate = 120;
 
         if (spawner == null)
             spawner = FindFirstObjectByType<PbfFluidSpawner>();
@@ -202,6 +224,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
     private void Update()
     {
+        
         if (PIR.instance.stateChange.WasReleasedThisFrame())
         {
             if (state == State.Solid)
@@ -213,6 +236,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
     private void FixedUpdate()
     {
+        CameraTargetAligment();
         if (state == State.Solid)
         {
             ApplySolidMovement();
@@ -256,6 +280,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         center /= validCount;
 
         Vector2 moveCenter = center;
+        playerCenter = center;
         moveCenter += baseOffset;
         moveCenter += PIR.instance.move.ReadValue<Vector2>().normalized * moveForce;
 
@@ -298,6 +323,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
     private void ApplySolidMovement()
     {
+        playerCenter = solidifiedBody.position;
         if (!solidifiedBody.isValid)
             return;
 
@@ -310,6 +336,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
         if (Mathf.Abs(horizontalInput) > 0.001f && torque != 0f)
             solidifiedBody.ApplyTorque(torque);
+        
     }
 
     private void ApplySolidifiedShapeProperties()
@@ -442,6 +469,8 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
     private void OnDrawGizmos()
     {
+        Gizmos.color = Color.red;
+        Gizmos.DrawSphere(cameraTarget.position,0.25f);
         if (Application.isPlaying && solidifiedBody.isValid)
             Gizmos.DrawCube(solidifiedBody.position, Vector3.one * 0.3f);
     }
