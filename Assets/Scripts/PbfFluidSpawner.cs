@@ -17,7 +17,7 @@ public class PbfFluidSpawner : MonoBehaviour
 {
     [Header("Refs")]
     [Tooltip("Sim to register with. Auto-found if null.")]
-    public PbfFluidLite sim;
+    public static PbfFluidLite sim => PbfFluidLite.simInstance;
 
     [Header("Layout")]
     public Vector2 spawnOrigin = new Vector2(-4f, 0f);
@@ -130,7 +130,6 @@ public class PbfFluidSpawner : MonoBehaviour
 
     bool EnsureSim()
     {
-        if (sim == null) sim = FindFirstObjectByType<PbfFluidLite>();
         if (sim == null)
         {
             if (showLogs) Debug.LogWarning("[Spawner] PbfFluidLite not found.");
