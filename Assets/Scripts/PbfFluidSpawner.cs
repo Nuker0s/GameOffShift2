@@ -32,7 +32,7 @@ public class PbfFluidSpawner : MonoBehaviour
     [Tooltip("Random offset added to each spawn position. Breaks perfect lattice so SPH forces engage immediately.")]
     public float jitter = 0.08f;
 
-    [Header("Body (code-only, no GameObjects)")]
+    [Header("Body")]
     [Tooltip("ON: radius = Spacing x Radius Ratio. Keep the diameter at ~80-90% of spacing: if circles already touch at rest, " +
              "engine contacts do all the work and the fluid pressure never gets a chance to act.")]
     public bool radiusFromSpacing = true;
