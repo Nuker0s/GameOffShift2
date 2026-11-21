@@ -1,3 +1,4 @@
+
 using System.Collections.Generic;
 using Unity.Collections;
 using UnityEngine;
@@ -19,6 +20,8 @@ public class BMeshTerrain2D : MonoBehaviour
     [Header("PhysicsCore2D")]
     [SerializeField] private PhysicsShapeDefinition physicsShapeDefinition =
         PhysicsShapeDefinition.defaultDefinition;
+
+    [SerializeField] private string physicsLayerName = "Default";
 
     [Header("Shadow")]
     [SerializeField] private bool generateShadowCaster = true;
@@ -504,13 +507,24 @@ public class BMeshTerrain2D : MonoBehaviour
                 return;
             }
 
+            // Apply the selected PhysicsCore2D layer to the generated shapes.
+            // Only categories are changed; contacts and groupIndex are preserved.
+            PhysicsShapeDefinition shapeDefinition = physicsShapeDefinition;
+
+            if (!string.IsNullOrWhiteSpace(physicsLayerName))
+            {
+                PhysicsShape.ContactFilter contactFilter = shapeDefinition.contactFilter;
+                contactFilter.categories = PhysicsLayers.GetLayerMask(physicsLayerName);
+                shapeDefinition.contactFilter = contactFilter;
+            }
+
             // This script assumes it owns all shapes on this PhysicsPose body.
             // Remove the previous generated set before creating the replacement.
             ClearExistingPhysicsShapes(body);
 
             using (NativeArray<PhysicsShape> createdShapes = body.CreateShapeBatch(
                 polygons,
-                physicsShapeDefinition,
+                shapeDefinition,
                 Allocator.Temp
             ))
             {
@@ -552,9 +566,6 @@ public class BMeshTerrain2D : MonoBehaviour
 
         if (caster == null)
             caster = gameObject.AddComponent<ShadowCaster2D>();
-
-        caster.castsShadows = true;
-        caster.selfShadows = selfShadows;
 
         // Geometry itself is supplied by BMeshTerrainShadowShapeProvider,
         // selected once in the ShadowCaster2D Casting Source dropdown.
