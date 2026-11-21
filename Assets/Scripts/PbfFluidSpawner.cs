@@ -75,6 +75,7 @@ public class PbfFluidSpawner : MonoBehaviour
 
     void Start()
     {
+        Debug.Log(sim);
         if (spawnOnStart) Spawn();
     }
 
