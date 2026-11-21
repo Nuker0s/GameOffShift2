@@ -22,8 +22,8 @@ public sealed class ParticleSolidifierSnapshot : ScriptableObject
     // Preserve custom data and callback targets that belonged to the source.
     public PhysicsUserData shapeUserData;
     public PhysicsUserData bodyUserData;
-    public object shapeCallbackTarget;
-    public object bodyCallbackTarget;
+    internal object shapeCallbackTarget;
+    internal object bodyCallbackTarget;
 
     // Fluid-solver registration to restore when the particle is recreated.
     public PbfFluidLite simulation;

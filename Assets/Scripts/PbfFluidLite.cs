@@ -161,6 +161,13 @@ public class PbfFluidLite : MonoBehaviour
     readonly Dictionary<PhysicsBody, int> indexOf = new Dictionary<PhysicsBody, int>();
     readonly HashSet<PhysicsPose> simPoses = new HashSet<PhysicsPose>();
 
+    public static PbfFluidLite simInstance;
+
+    public void Awake()
+    {
+        simInstance = this;
+    }
+
     // ------------------------------------------------------------------ per-step native scratch
     NativeArray<float2> nX, nV, nVPred, nPos0, nPredA, nPredB, nVCon, nForce;
     NativeArray<float> nGs, nLambda, nRatio;
