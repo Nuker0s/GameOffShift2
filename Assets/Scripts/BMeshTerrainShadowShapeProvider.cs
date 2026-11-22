@@ -5,11 +5,11 @@ using UnityEngine.Rendering.Universal;
 
 /// <summary>
 /// URP ShadowCaster2D source for BMeshTerrain2D.
-/// Select "BMesh Terrain" in the ShadowCaster2D Casting Source dropdown.
 ///
-/// BMeshTerrain2D.GeneratedOutline is stored in terrain-local coordinates.
-/// ShadowCaster2D applies the GameObject transform itself at render time,
-/// so this provider passes those local vertices with Matrix4x4.identity.
+/// ShadowCaster2D lives on a child GameObject named "ShadowCaster", while
+/// BMeshTerrain2D and its MeshRenderer live on the parent terrain GameObject.
+/// The provider uses the caster child's Transform as its source component and
+/// finds BMeshTerrain2D in the parent hierarchy.
 /// </summary>
 [Serializable]
 public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
@@ -24,7 +24,15 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
 
     public override bool IsRequiredComponentData(Component sourceComponent)
     {
-        return sourceComponent is BMeshTerrain2D;
+        if (sourceComponent is BMeshTerrain2D)
+            return true;
+
+        Transform sourceTransform = sourceComponent as Transform;
+
+        if (sourceTransform == null)
+            return false;
+
+        return sourceTransform.GetComponentInParent<BMeshTerrain2D>() != null;
     }
 
     public override void OnInitialized(
@@ -47,9 +55,15 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
         ShadowShape2D shadowShape,
         bool force)
     {
+        if (sourceComponent == null || shadowShape == null)
+            return;
+
         BMeshTerrain2D terrain = sourceComponent as BMeshTerrain2D;
 
-        if (terrain == null || shadowShape == null)
+        if (terrain == null)
+            terrain = sourceComponent.GetComponentInParent<BMeshTerrain2D>();
+
+        if (terrain == null)
             return;
 
         System.Collections.Generic.IReadOnlyList<Vector3> outline = terrain.GeneratedOutline;
@@ -83,20 +97,25 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
             Allocator.Temp
         );
 
+        Transform terrainTransform = terrain.transform;
+        Transform casterTransform = sourceComponent.transform;
+
         try
         {
             for (int i = 0; i < pointCount; i++)
             {
-                // Keep vertices in local space. Do NOT call TransformPoint here.
-                vertices[i] = outline[i];
+                // GeneratedOutline is terrain-local. Convert through world space
+                // so the points are also correct in the child caster's local space.
+                Vector3 worldPoint = terrainTransform.TransformPoint(outline[i]);
+                vertices[i] = casterTransform.InverseTransformPoint(worldPoint);
                 radii[i] = 0f;
 
+                // Line segments around the outline. No triangulated mesh is passed
+                // into ShadowShape2D by this provider.
                 indices[i * 2] = i;
                 indices[i * 2 + 1] = (i + 1) % pointCount;
             }
 
-            // The caster is on the terrain root, so its transform is the terrain
-            // transform. The vertices are already terrain-local.
             shadowShape.SetShape(
                 vertices,
                 indices,

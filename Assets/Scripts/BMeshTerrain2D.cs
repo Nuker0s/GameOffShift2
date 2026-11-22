@@ -9,6 +9,8 @@ using static BMesh;
 [ExecuteAlways]
 [DisallowMultipleComponent]
 [RequireComponent(typeof(PhysicsPose))]
+[RequireComponent(typeof(MeshFilter))]
+[RequireComponent(typeof(MeshRenderer))]
 public class BMeshTerrain2D : MonoBehaviour
 {
     [Header("Rendering")]
@@ -43,10 +45,10 @@ public class BMeshTerrain2D : MonoBehaviour
     [SerializeField, HideInInspector] private Mesh generatedMesh;
     [SerializeField, HideInInspector] private Vector3[] generatedOutline = new Vector3[0];
     [SerializeField, HideInInspector] private int generationVersion;
-    [SerializeField, HideInInspector] private GameObject visualsObject;
+    [SerializeField, HideInInspector] private GameObject shadowCasterObject;
 
     private BMesh debugBMesh;
-    private bool ensuringVisualComponents;
+    private bool ensuringComponents;
 
     public IReadOnlyList<Vector3> GeneratedOutline
     {
@@ -73,9 +75,13 @@ public class BMeshTerrain2D : MonoBehaviour
     {
 #if UNITY_EDITOR
         if (!UnityEditor.EditorUtility.IsPersistent(this))
-            EnsureVisualComponents();
+        {
+            EnsureRootVisualComponents();
+            EnsureShadowCasterChild();
+        }
 #else
-        EnsureVisualComponents();
+        EnsureRootVisualComponents();
+        EnsureShadowCasterChild();
 #endif
 
 #if UNITY_EDITOR
@@ -460,16 +466,19 @@ public class BMeshTerrain2D : MonoBehaviour
             );
         }
 
-        MeshFilter meshFilter;
-        MeshRenderer meshRenderer;
-        EnsureVisualComponents(out meshFilter, out meshRenderer);
+        EnsureRootVisualComponents();
 
+        MeshFilter meshFilter = GetComponent<MeshFilter>();
+        MeshRenderer meshRenderer = GetComponent<MeshRenderer>();
         Mesh previousGeneratedMesh = generatedMesh;
 
         BMeshUnity.SetInMeshFilter(bmesh, meshFilter);
 
         generatedMesh = meshFilter.sharedMesh;
-        meshRenderer.sharedMaterial = material;
+
+        if (material != null)
+            meshRenderer.sharedMaterial = material;
+
         debugBMesh = bmesh;
 
         if (previousGeneratedMesh != null && previousGeneratedMesh != generatedMesh)
@@ -563,160 +572,192 @@ public class BMeshTerrain2D : MonoBehaviour
     }
 
     // ------------------------------------------------------------
-    // Visual child setup
+    // Root renderer and shadow child setup
     // ------------------------------------------------------------
 
-    private void EnsureVisualComponents()
+    private void EnsureRootVisualComponents()
     {
-        MeshFilter ignoredFilter;
-        MeshRenderer ignoredRenderer;
-        EnsureVisualComponents(out ignoredFilter, out ignoredRenderer);
-    }
-
-    private void EnsureVisualComponents(
-        out MeshFilter visualMeshFilter,
-        out MeshRenderer visualMeshRenderer)
-    {
-        if (ensuringVisualComponents)
-        {
-            visualMeshFilter = null;
-            visualMeshRenderer = null;
+        if (ensuringComponents)
             return;
-        }
 
-        ensuringVisualComponents = true;
+        ensuringComponents = true;
 
         try
         {
-            EnsureVisualObject();
-
             MeshFilter rootMeshFilter = GetComponent<MeshFilter>();
+            bool createdRootMeshFilter = rootMeshFilter == null;
+
+            if (rootMeshFilter == null)
+                rootMeshFilter = gameObject.AddComponent<MeshFilter>();
+
             MeshRenderer rootMeshRenderer = GetComponent<MeshRenderer>();
+            bool createdRootMeshRenderer = rootMeshRenderer == null;
 
-            visualMeshFilter = visualsObject.GetComponent<MeshFilter>();
-            if (visualMeshFilter == null)
-                visualMeshFilter = AddVisualComponent<MeshFilter>();
+            if (rootMeshRenderer == null)
+                rootMeshRenderer = gameObject.AddComponent<MeshRenderer>();
 
-            visualMeshRenderer = visualsObject.GetComponent<MeshRenderer>();
-            bool createdVisualRenderer = visualMeshRenderer == null;
+            // Migrate the MeshFilter/MeshRenderer from the Visuals child created
+            // by the previous hierarchy layout back onto this terrain GameObject.
+            Transform oldVisuals = transform.Find("Visuals");
 
-            if (createdVisualRenderer)
-                visualMeshRenderer = AddVisualComponent<MeshRenderer>();
-
-            // Migrate the old root MeshFilter to the child before removing it.
-            // This preserves the currently displayed mesh until Regenerate replaces it.
-            if (rootMeshFilter != null && rootMeshFilter != visualMeshFilter)
+            if (oldVisuals != null)
             {
-                if (visualMeshFilter.sharedMesh == null)
-                    visualMeshFilter.sharedMesh = rootMeshFilter.sharedMesh;
+                MeshFilter oldMeshFilter = oldVisuals.GetComponent<MeshFilter>();
+                MeshRenderer oldMeshRenderer = oldVisuals.GetComponent<MeshRenderer>();
 
-                RemoveVisualComponent(rootMeshFilter);
-            }
-
-            // Preserve the most important renderer settings from older versions.
-            // The material is assigned again by GenerateMesh from the serialized field.
-            if (rootMeshRenderer != null && rootMeshRenderer != visualMeshRenderer)
-            {
-                if (createdVisualRenderer)
+                if (oldMeshFilter != null &&
+                    (createdRootMeshFilter || rootMeshFilter.sharedMesh == null))
                 {
-                    visualMeshRenderer.sharedMaterials = rootMeshRenderer.sharedMaterials;
-                    visualMeshRenderer.sortingLayerID = rootMeshRenderer.sortingLayerID;
-                    visualMeshRenderer.sortingOrder = rootMeshRenderer.sortingOrder;
-                    visualMeshRenderer.enabled = rootMeshRenderer.enabled;
-                    visualMeshRenderer.receiveShadows = rootMeshRenderer.receiveShadows;
-                    visualMeshRenderer.shadowCastingMode = rootMeshRenderer.shadowCastingMode;
+                    rootMeshFilter.sharedMesh = oldMeshFilter.sharedMesh;
                 }
 
-                // The ShadowCaster2D must not share its GameObject with a Renderer.
-                RemoveVisualComponent(rootMeshRenderer);
-            }
+                if (oldMeshRenderer != null && createdRootMeshRenderer)
+                    CopyRendererSettings(oldMeshRenderer, rootMeshRenderer);
 
-            visualsObject.layer = gameObject.layer;
+                if (oldMeshFilter != null)
+                    RemoveGeneratedComponent(oldMeshFilter);
+
+                if (oldMeshRenderer != null)
+                    RemoveGeneratedComponent(oldMeshRenderer);
+
+                // Only remove the old container if it is now empty. Any unrelated
+                // children/components placed there are left untouched.
+                if (oldVisuals.childCount == 0 &&
+                    oldVisuals.GetComponents<Component>().Length <= 1)
+                {
+                    DestroyGeneratedObject(oldVisuals.gameObject);
+                }
+            }
 
 #if UNITY_EDITOR
             if (!Application.isPlaying)
             {
                 UnityEditor.EditorUtility.SetDirty(this);
-                UnityEditor.EditorUtility.SetDirty(visualsObject);
-                UnityEditor.EditorUtility.SetDirty(visualMeshFilter);
-                UnityEditor.EditorUtility.SetDirty(visualMeshRenderer);
+                UnityEditor.EditorUtility.SetDirty(rootMeshFilter);
+                UnityEditor.EditorUtility.SetDirty(rootMeshRenderer);
                 UnityEditor.PrefabUtility.RecordPrefabInstancePropertyModifications(transform);
-                UnityEditor.PrefabUtility.RecordPrefabInstancePropertyModifications(visualsObject.transform);
             }
 #endif
         }
         finally
         {
-            ensuringVisualComponents = false;
+            ensuringComponents = false;
         }
     }
 
-    private void EnsureVisualObject()
+    private void CopyRendererSettings(MeshRenderer source, MeshRenderer destination)
     {
-        if (visualsObject != null && visualsObject.transform.parent != transform)
-            visualsObject = null;
-
-        if (visualsObject == null)
-        {
-            Transform existingVisuals = transform.Find("Visuals");
-
-            if (existingVisuals != null)
-                visualsObject = existingVisuals.gameObject;
-        }
-
-        if (visualsObject == null)
-        {
-            visualsObject = new GameObject("Visuals");
-            visualsObject.transform.SetParent(transform, false);
-        }
-
-        Transform visualTransform = visualsObject.transform;
-        visualTransform.SetParent(transform, false);
-        visualTransform.localPosition = Vector3.zero;
-        visualTransform.localRotation = Quaternion.identity;
-        visualTransform.localScale = Vector3.one;
+        destination.sharedMaterials = source.sharedMaterials;
+        destination.enabled = source.enabled;
+        destination.receiveShadows = source.receiveShadows;
+        destination.shadowCastingMode = source.shadowCastingMode;
+        destination.sortingLayerID = source.sortingLayerID;
+        destination.sortingOrder = source.sortingOrder;
+        destination.lightProbeUsage = source.lightProbeUsage;
+        destination.reflectionProbeUsage = source.reflectionProbeUsage;
+        destination.probeAnchor = source.probeAnchor;
+        destination.motionVectorGenerationMode = source.motionVectorGenerationMode;
+        destination.allowOcclusionWhenDynamic = source.allowOcclusionWhenDynamic;
     }
 
-    private T AddVisualComponent<T>() where T : Component
+    private void EnsureShadowCasterChild()
     {
-        return visualsObject.AddComponent<T>();
+        ShadowCaster2D rootCaster = GetComponent<ShadowCaster2D>();
+        Transform existingShadowTransform = null;
+
+        if (shadowCasterObject != null && shadowCasterObject.transform.parent == transform)
+            existingShadowTransform = shadowCasterObject.transform;
+
+        if (existingShadowTransform == null)
+            existingShadowTransform = transform.Find("ShadowCaster");
+
+        // If generation is disabled and there is no previous caster to migrate,
+        // do not create a new one.
+        if (!generateShadowCaster && rootCaster == null && existingShadowTransform == null)
+            return;
+
+        if (existingShadowTransform == null)
+        {
+            shadowCasterObject = new GameObject("ShadowCaster");
+            shadowCasterObject.transform.SetParent(transform, false);
+            existingShadowTransform = shadowCasterObject.transform;
+        }
+        else
+        {
+            shadowCasterObject = existingShadowTransform.gameObject;
+        }
+
+        // Keep the child aligned with the terrain. The provider also converts
+        // points into caster-local space, so this is the expected default.
+        existingShadowTransform.localPosition = Vector3.zero;
+        existingShadowTransform.localRotation = Quaternion.identity;
+        existingShadowTransform.localScale = Vector3.one;
+        shadowCasterObject.layer = gameObject.layer;
+
+        ShadowCaster2D childCaster = shadowCasterObject.GetComponent<ShadowCaster2D>();
+
+        if (childCaster == null)
+            childCaster = shadowCasterObject.AddComponent<ShadowCaster2D>();
+
+        if (rootCaster != null && rootCaster != childCaster)
+        {
+            bool shouldEnableChild = rootCaster.enabled;
+
+            // Copy the serialized casting source/provider configuration before
+            // removing the old root caster. This preserves the inspector setup
+            // when migrating objects made with the previous script version.
+            childCaster.enabled = false;
+            CopyShadowCasterSettings(rootCaster, childCaster);
+            childCaster.enabled = false;
+
+            RemoveGeneratedComponent(rootCaster);
+            childCaster.enabled = shouldEnableChild;
+        }
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            UnityEditor.EditorUtility.SetDirty(this);
+            UnityEditor.EditorUtility.SetDirty(shadowCasterObject);
+            UnityEditor.EditorUtility.SetDirty(childCaster);
+            UnityEditor.PrefabUtility.RecordPrefabInstancePropertyModifications(existingShadowTransform);
+        }
+#endif
     }
 
-    private void RemoveVisualComponent(Component component)
+    private void CopyShadowCasterSettings(ShadowCaster2D source, ShadowCaster2D destination)
+    {
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            UnityEditor.EditorUtility.CopySerialized(source, destination);
+            return;
+        }
+#endif
+
+        string serializedCaster = JsonUtility.ToJson(source);
+        JsonUtility.FromJsonOverwrite(serializedCaster, destination);
+    }
+
+    private void RemoveGeneratedComponent(Component component)
     {
         if (component == null)
             return;
 
+        Behaviour behaviour = component as Behaviour;
+
+        if (behaviour != null)
+            behaviour.enabled = false;
+
         if (Application.isPlaying)
-        {
-            Behaviour behaviour = component as Behaviour;
-            if (behaviour != null)
-                behaviour.enabled = false;
-
             Destroy(component);
-        }
         else
-        {
             DestroyImmediate(component);
-        }
     }
-
-    // ------------------------------------------------------------
-    // ShadowCaster2D setup
-    // ------------------------------------------------------------
 
     private void GenerateShadowCaster()
     {
-        if (!generateShadowCaster)
-            return;
-
-        ShadowCaster2D caster = GetComponent<ShadowCaster2D>();
-
-        if (caster == null)
-            caster = gameObject.AddComponent<ShadowCaster2D>();
-
-        // Geometry itself is supplied by BMeshTerrainShadowShapeProvider,
-        // selected once in the ShadowCaster2D Casting Source dropdown.
+        EnsureShadowCasterChild();
     }
 
     // ------------------------------------------------------------
