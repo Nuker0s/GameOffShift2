@@ -8,11 +8,8 @@ using UnityEngine.Rendering.Universal;
 /// Select "BMesh Terrain" in the ShadowCaster2D Casting Source dropdown.
 ///
 /// BMeshTerrain2D.GeneratedOutline is stored in terrain-local coordinates.
-/// ShadowCaster2D applies the GameObject transform itself at render time
-/// (like MeshFilter/MeshRenderer do), so this provider passes those local
-/// vertices with Matrix4x4.identity. Passing localToWorldMatrix here would
-/// apply the transform twice, offsetting the shadow by the GameObject
-/// position (worse the further the object is from the world origin).
+/// ShadowCaster2D applies the GameObject transform itself at render time,
+/// so this provider passes those local vertices with Matrix4x4.identity.
 /// </summary>
 [Serializable]
 public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
@@ -81,8 +78,6 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
             Allocator.Temp
         );
 
-        // The matrix-taking SetShape overload also accepts a radius for each
-        // vertex. Zero radii describe a sharp polygon outline.
         NativeArray<float> radii = new NativeArray<float>(
             pointCount,
             Allocator.Temp
@@ -100,9 +95,8 @@ public sealed class BMeshTerrainShadowShapeProvider : ShadowShape2DProvider
                 indices[i * 2 + 1] = (i + 1) % pointCount;
             }
 
-            // Keep the shape in terrain-local space with identity. ShadowCaster2D
-            // applies the GameObject transform at render time, so passing
-            // localToWorldMatrix here would move/rotate/scale it twice.
+            // The caster is on the terrain root, so its transform is the terrain
+            // transform. The vertices are already terrain-local.
             shadowShape.SetShape(
                 vertices,
                 indices,

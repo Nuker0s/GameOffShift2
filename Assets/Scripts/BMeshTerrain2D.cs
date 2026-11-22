@@ -9,8 +9,6 @@ using static BMesh;
 [ExecuteAlways]
 [DisallowMultipleComponent]
 [RequireComponent(typeof(PhysicsPose))]
-[RequireComponent(typeof(MeshFilter))]
-[RequireComponent(typeof(MeshRenderer))]
 public class BMeshTerrain2D : MonoBehaviour
 {
     [Header("Rendering")]
@@ -45,8 +43,10 @@ public class BMeshTerrain2D : MonoBehaviour
     [SerializeField, HideInInspector] private Mesh generatedMesh;
     [SerializeField, HideInInspector] private Vector3[] generatedOutline = new Vector3[0];
     [SerializeField, HideInInspector] private int generationVersion;
+    [SerializeField, HideInInspector] private GameObject visualsObject;
 
     private BMesh debugBMesh;
+    private bool ensuringVisualComponents;
 
     public IReadOnlyList<Vector3> GeneratedOutline
     {
@@ -71,6 +71,13 @@ public class BMeshTerrain2D : MonoBehaviour
 
     private void OnEnable()
     {
+#if UNITY_EDITOR
+        if (!UnityEditor.EditorUtility.IsPersistent(this))
+            EnsureVisualComponents();
+#else
+        EnsureVisualComponents();
+#endif
+
 #if UNITY_EDITOR
         if (!Application.isPlaying)
         {
@@ -453,8 +460,10 @@ public class BMeshTerrain2D : MonoBehaviour
             );
         }
 
-        MeshFilter meshFilter = GetComponent<MeshFilter>();
-        MeshRenderer meshRenderer = GetComponent<MeshRenderer>();
+        MeshFilter meshFilter;
+        MeshRenderer meshRenderer;
+        EnsureVisualComponents(out meshFilter, out meshRenderer);
+
         Mesh previousGeneratedMesh = generatedMesh;
 
         BMeshUnity.SetInMeshFilter(bmesh, meshFilter);
@@ -551,6 +560,145 @@ public class BMeshTerrain2D : MonoBehaviour
         }
 
         body.ApplyMassFromShapes();
+    }
+
+    // ------------------------------------------------------------
+    // Visual child setup
+    // ------------------------------------------------------------
+
+    private void EnsureVisualComponents()
+    {
+        MeshFilter ignoredFilter;
+        MeshRenderer ignoredRenderer;
+        EnsureVisualComponents(out ignoredFilter, out ignoredRenderer);
+    }
+
+    private void EnsureVisualComponents(
+        out MeshFilter visualMeshFilter,
+        out MeshRenderer visualMeshRenderer)
+    {
+        if (ensuringVisualComponents)
+        {
+            visualMeshFilter = null;
+            visualMeshRenderer = null;
+            return;
+        }
+
+        ensuringVisualComponents = true;
+
+        try
+        {
+            EnsureVisualObject();
+
+            MeshFilter rootMeshFilter = GetComponent<MeshFilter>();
+            MeshRenderer rootMeshRenderer = GetComponent<MeshRenderer>();
+
+            visualMeshFilter = visualsObject.GetComponent<MeshFilter>();
+            if (visualMeshFilter == null)
+                visualMeshFilter = AddVisualComponent<MeshFilter>();
+
+            visualMeshRenderer = visualsObject.GetComponent<MeshRenderer>();
+            bool createdVisualRenderer = visualMeshRenderer == null;
+
+            if (createdVisualRenderer)
+                visualMeshRenderer = AddVisualComponent<MeshRenderer>();
+
+            // Migrate the old root MeshFilter to the child before removing it.
+            // This preserves the currently displayed mesh until Regenerate replaces it.
+            if (rootMeshFilter != null && rootMeshFilter != visualMeshFilter)
+            {
+                if (visualMeshFilter.sharedMesh == null)
+                    visualMeshFilter.sharedMesh = rootMeshFilter.sharedMesh;
+
+                RemoveVisualComponent(rootMeshFilter);
+            }
+
+            // Preserve the most important renderer settings from older versions.
+            // The material is assigned again by GenerateMesh from the serialized field.
+            if (rootMeshRenderer != null && rootMeshRenderer != visualMeshRenderer)
+            {
+                if (createdVisualRenderer)
+                {
+                    visualMeshRenderer.sharedMaterials = rootMeshRenderer.sharedMaterials;
+                    visualMeshRenderer.sortingLayerID = rootMeshRenderer.sortingLayerID;
+                    visualMeshRenderer.sortingOrder = rootMeshRenderer.sortingOrder;
+                    visualMeshRenderer.enabled = rootMeshRenderer.enabled;
+                    visualMeshRenderer.receiveShadows = rootMeshRenderer.receiveShadows;
+                    visualMeshRenderer.shadowCastingMode = rootMeshRenderer.shadowCastingMode;
+                }
+
+                // The ShadowCaster2D must not share its GameObject with a Renderer.
+                RemoveVisualComponent(rootMeshRenderer);
+            }
+
+            visualsObject.layer = gameObject.layer;
+
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
+                UnityEditor.EditorUtility.SetDirty(this);
+                UnityEditor.EditorUtility.SetDirty(visualsObject);
+                UnityEditor.EditorUtility.SetDirty(visualMeshFilter);
+                UnityEditor.EditorUtility.SetDirty(visualMeshRenderer);
+                UnityEditor.PrefabUtility.RecordPrefabInstancePropertyModifications(transform);
+                UnityEditor.PrefabUtility.RecordPrefabInstancePropertyModifications(visualsObject.transform);
+            }
+#endif
+        }
+        finally
+        {
+            ensuringVisualComponents = false;
+        }
+    }
+
+    private void EnsureVisualObject()
+    {
+        if (visualsObject != null && visualsObject.transform.parent != transform)
+            visualsObject = null;
+
+        if (visualsObject == null)
+        {
+            Transform existingVisuals = transform.Find("Visuals");
+
+            if (existingVisuals != null)
+                visualsObject = existingVisuals.gameObject;
+        }
+
+        if (visualsObject == null)
+        {
+            visualsObject = new GameObject("Visuals");
+            visualsObject.transform.SetParent(transform, false);
+        }
+
+        Transform visualTransform = visualsObject.transform;
+        visualTransform.SetParent(transform, false);
+        visualTransform.localPosition = Vector3.zero;
+        visualTransform.localRotation = Quaternion.identity;
+        visualTransform.localScale = Vector3.one;
+    }
+
+    private T AddVisualComponent<T>() where T : Component
+    {
+        return visualsObject.AddComponent<T>();
+    }
+
+    private void RemoveVisualComponent(Component component)
+    {
+        if (component == null)
+            return;
+
+        if (Application.isPlaying)
+        {
+            Behaviour behaviour = component as Behaviour;
+            if (behaviour != null)
+                behaviour.enabled = false;
+
+            Destroy(component);
+        }
+        else
+        {
+            DestroyImmediate(component);
+        }
     }
 
     // ------------------------------------------------------------
