@@ -61,7 +61,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RoomTransporter
   ID: 0
-  toLoad: {}
+  toLoad: 
   transporterTarget: 
   doorToOpen: 0
   MoveTarget: {x: 0, y: 0}
@@ -70,6 +70,8 @@ MonoBehaviour:
   - {fileID: 6365134572598370937}
   - {fileID: 6921388036098128614}
   - {fileID: 2514469475705556409}
+  transportBoxSize: {x: 8, y: 8}
+  transportBoxOffset: {x: 0, y: 0}
   transportDebug: 0
 --- !u!1 &2845946222928762395
 GameObject:
