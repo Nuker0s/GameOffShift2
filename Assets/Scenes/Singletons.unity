@@ -1030,21 +1030,25 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Player
   sim: {fileID: 936009783}
   body: {fileID: 0}
-  initalParticleCount: 25
+  initalParticleCount: 50
   state: 0
   spawner: {fileID: 0}
-  spiralCenter: {x: 0, y: 0}
-  useTransformAsCenter: 1
   spiralSpacing: 0.25
   boundaryPadding: 0.25
-  liquidBaseForce: 3
+  liquidBaseForce: 2
   baseOffset: {x: 0, y: 0.5}
   moveForce: 0.5
   maxForceDistance: 1.5
+  terrainRaycastOffset: 0.4
+  terrainLayerMask:
+    serializedVersion: 2
+    m_Bits: 64
+  verticalForceMultiplierPerTerrainHit: 1.5
   solidDensity: 1
   solidFriction: 1
   solidTorque: 15
-  absorptionRange: 0.5
+  angularLimit: 1000
+  absorptionRange: 1
   absorptionChecksPerSecond: 15
   cameraTarget: {fileID: 1175692858}
   maxCameraOffset: 8

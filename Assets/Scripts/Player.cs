@@ -44,6 +44,23 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
     public float moveForce = 0f;
     public float maxForceDistance = 1.5f;
 
+    [Tooltip("Extra distance added beyond the furthest player particle for each terrain raycast.")]
+    [Min(0f)]
+    public float terrainRaycastOffset = 1f;
+
+    [Tooltip("Normal Unity GameObject layer(s) used by Terrain PhysicsBody components. If left empty, the script looks for a Unity layer named Terrain in Awake.")]
+    public LayerMask terrainLayerMask;
+
+    [Tooltip("Amount added to the vertical force multiplier for each terrain raycast hit. 0.5 means 1 hit = 0.5x, 2 hits = 1x, 3 hits = 1.5x.")]
+    [Min(0f)]
+    public float verticalForceMultiplierPerTerrainHit = 0.5f;
+
+    private Vector2[] terrainRayDirections;
+    private float[] terrainRayLengths;
+    private int[] terrainRayHitCounts;
+    private Vector2 terrainRayOrigin;
+    private bool hasTerrainRaycasts;
+
     [Header("Solidified Shape Properties")]
     [Tooltip("Density applied to every generated polygon shape. Higher density increases the solidified body's mass.")]
     [Min(0.01f)]
@@ -90,6 +107,33 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
         cameraTarget.position = playerCenter + (dir * distance);
     }
+    private void Awake()
+    {
+        // Initialize these here instead of relying on field initializers.
+        // Unity API calls such as LayerMask.NameToLayer are not allowed in
+        // MonoBehaviour field initializers / constructors.
+        terrainRayDirections = new Vector2[]
+        {
+            Vector2.left,
+            Vector2.right,
+            Vector2.down
+        };
+        terrainRayLengths = new float[3];
+        terrainRayHitCounts = new int[3];
+
+        // Preserve a layer mask explicitly selected in the Inspector.
+        // Otherwise, default to the normal Unity GameObject layer named Terrain.
+        if (terrainLayerMask.value == 0)
+        {
+            int terrainLayerIndex = LayerMask.NameToLayer("Terrain");
+
+            if (terrainLayerIndex >= 0)
+                terrainLayerMask = 1 << terrainLayerIndex;
+            else
+                Debug.LogError("[Player] No normal Unity layer named 'Terrain' exists. Create it or assign Terrain Layer Mask in the Inspector.", this);
+        }
+    }
+
     private void Start()
     {
         Application.targetFrameRate = 120;
@@ -110,6 +154,12 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
             Debug.LogWarning("[Player] No PbfFluidLite found. Liquid particle absorption will be disabled.");
 
         state = State.Liquid;
+
+        if (terrainLayerMask.value == 0)
+            Debug.LogError("[Player] Terrain raycasts are disabled because Terrain Layer Mask is empty.", this);
+
+        if (PhysicsWorld.usePhysicsLayers)
+            Debug.LogWarning("[Player] Physics Core 2D 'Use Physics Layers' is enabled, but this raycast is configured for normal Unity GameObject layers. Disable 'Use Physics Layers' in Project Settings > Physics Core 2D > Settings to use the standard Unity layers.", this);
 
         Vector2 center = spawnPos;
 
@@ -281,6 +331,56 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
         Vector2 moveCenter = center;
         playerCenter = center;
+        // Cast from the player's center toward left, right, and down.
+        // Each ray extends beyond the furthest particle in its corresponding half.
+        float leftExtent = 0f;
+        float rightExtent = 0f;
+        float bottomExtent = 0f;
+
+        foreach (PhysicsBody particle in particles)
+        {
+            if (!particle.isValid)
+                continue;
+
+            Vector2 offsetFromCenter = particle.position - center;
+            leftExtent = Mathf.Max(leftExtent, -offsetFromCenter.x);
+            rightExtent = Mathf.Max(rightExtent, offsetFromCenter.x);
+            bottomExtent = Mathf.Max(bottomExtent, -offsetFromCenter.y);
+        }
+
+        // Use the ordinary Unity GameObject LayerMask, not the separate
+        // Physics Core 2D layer-name configuration.
+        PhysicsMask terrainMask = new PhysicsMask(terrainLayerMask);
+
+        // All query categories avoid filtering out shapes because of their
+        // contact settings; hitCategories still restricts results to Terrain.
+        PhysicsQuery.QueryFilter terrainFilter = new PhysicsQuery.QueryFilter(
+            PhysicsMask.All,
+            terrainMask,
+            PhysicsWorld.IgnoreFilter.None);
+
+        PhysicsWorld world = PhysicsWorld.defaultWorld;
+        terrainRayOrigin = center;
+        terrainRayLengths[0] = terrainRaycastOffset + leftExtent;
+        terrainRayLengths[1] = terrainRaycastOffset + rightExtent;
+        terrainRayLengths[2] = terrainRaycastOffset + bottomExtent;
+
+        int terrainHitCount = 0;
+        for (int rayIndex = 0; rayIndex < terrainRayDirections.Length; rayIndex++)
+        {
+            terrainRayHitCounts[rayIndex] = HasTerrainRayHit(
+                world,
+                center,
+                terrainRayDirections[rayIndex],
+                terrainRayLengths[rayIndex],
+                terrainFilter) ? 1 : 0;
+
+            terrainHitCount += terrainRayHitCounts[rayIndex];
+        }
+
+        hasTerrainRaycasts = true;
+        float verticalForceMultiplier = terrainHitCount * verticalForceMultiplierPerTerrainHit;
+
         moveCenter += baseOffset;
         moveCenter += PIR.instance.move.ReadValue<Vector2>().normalized * moveForce;
 
@@ -295,6 +395,9 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
                 (moveCenter - particle.position).normalized *
                 liquidBaseForce *
                 Mathf.Clamp(distance, 0f, maxForceDistance);
+
+            // The number of terrain rays that hit determines the vertical force multiplier.
+            force.y *= verticalForceMultiplier;
 
             particle.ApplyForce(force, particle.worldCenterOfMass);
         }
@@ -319,6 +422,30 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
         particles = result;
         RebuildPlayerParticleSet();
+    }
+
+    private bool HasTerrainRayHit(
+        PhysicsWorld world,
+        Vector2 origin,
+        Vector2 direction,
+        float rayLength,
+        PhysicsQuery.QueryFilter filter)
+    {
+        if (rayLength <= 0f)
+            return false;
+
+        PhysicsQuery.CastRayInput rayInput =
+            new PhysicsQuery.CastRayInput(origin, direction * rayLength);
+
+        using (NativeArray<PhysicsQuery.WorldCastResult> hits = world.CastRay(
+            rayInput,
+            filter,
+            PhysicsQuery.WorldCastMode.All,
+            Allocator.Temp))
+        {
+            // Count this direction once, even when the ray crosses multiple Terrain shapes.
+            return hits.Length > 0;
+        }
     }
 
     private void ApplySolidMovement()
@@ -472,9 +599,28 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
     private void OnDrawGizmos()
     {
-        Gizmos.color = Color.red;
-        Gizmos.DrawSphere(cameraTarget.position,0.25f);
+        if (cameraTarget != null)
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawSphere(cameraTarget.position, 0.25f);
+        }
+
         if (Application.isPlaying && solidifiedBody.isValid)
             Gizmos.DrawCube(solidifiedBody.position, Vector3.one * 0.3f);
+
+        if (!Application.isPlaying || !hasTerrainRaycasts)
+            return;
+
+        for (int rayIndex = 0; rayIndex < terrainRayDirections.Length; rayIndex++)
+        {
+            Vector2 rayStart = terrainRayOrigin;
+            Vector2 rayEnd = rayStart + terrainRayDirections[rayIndex] * terrainRayLengths[rayIndex];
+            bool hitTerrain = terrainRayHitCounts[rayIndex] > 0;
+
+            // Green = one or more Terrain hits; red = no Terrain hit.
+            Gizmos.color = hitTerrain ? Color.green : Color.red;
+            Gizmos.DrawLine(rayStart, rayEnd);
+            Gizmos.DrawSphere(rayEnd, 0.045f);
+        }
     }
 }
