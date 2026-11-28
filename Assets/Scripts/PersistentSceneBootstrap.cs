@@ -11,12 +11,23 @@ public class PersistentSceneBootstrap : MonoBehaviour
 {
     [Tooltip("Scene name (as in Build Settings) of the persistent scene to keep loaded.")]
     public string persistentSceneName = "Persistent";
+    public Vector2 customSpawnPos;
+    public bool useCustomSpawnPos;
 
     // Static guard so two bootstraps awakening in the same frame don't double-load.
     private static bool s_IsLoadingPersistent = false;
 
     private void Awake()
     {
+        if(useCustomSpawnPos)
+        {
+            Player.spawnPos = customSpawnPos;
+        }
+        else
+        {
+            Player.spawnPos = transform.position;
+        }
+
         if (string.IsNullOrEmpty(persistentSceneName))
         {
             return;

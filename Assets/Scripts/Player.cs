@@ -22,8 +22,6 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
     public PbfFluidSpawner spawner;
 
     [Header("Spiral Spawn")]
-    public Vector2 spiralCenter = Vector2.zero;
-    public bool useTransformAsCenter = true;
     public float spiralSpacing = 0.25f;
 
     private List<PhysicsBody> particles = new List<PhysicsBody>();
@@ -59,6 +57,8 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
     [Min(0f)]
     public float solidTorque = 20f;
 
+    public float angularLimit = 5f;
+
     [Header("Liquid Particle Absorption")]
     [Tooltip("Maximum center-to-center distance for absorbing a same-type particle.")]
     [Min(0.01f)]
@@ -69,6 +69,8 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
     public Transform cameraTarget;
     Vector2 playerCenter;
     public float maxCameraOffset = 5;
+
+    public static Vector2 spawnPos= Vector2.zero;
 
     public void CameraTargetAligment()
     {
@@ -109,9 +111,7 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
 
         state = State.Liquid;
 
-        Vector2 center = useTransformAsCenter
-            ? (Vector2)transform.position
-            : spiralCenter;
+        Vector2 center = spawnPos;
 
         float step = spiralSpacing > 0f
             ? spiralSpacing
@@ -337,6 +337,9 @@ public class Player : MonoBehaviour, PhysicsCallbacks.IContactCallback
         if (Mathf.Abs(horizontalInput) > 0.001f && torque != 0f)
             solidifiedBody.ApplyTorque(torque);
         
+        
+        solidifiedBody.angularVelocity = Mathf.Clamp(solidifiedBody.angularVelocity,-angularLimit,angularLimit);
+        Debug.Log(solidifiedBody.angularVelocity,this);
     }
 
     private void ApplySolidifiedShapeProperties()
